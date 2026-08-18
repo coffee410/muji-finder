@@ -203,6 +203,16 @@
   .doc-prow-tx { min-width: 0; }
   .doc-prow-nm { font-size: 13.5px; line-height: 1.35; color: var(--ink); font-weight: 600; }
   .doc-prow .doc-code { color: var(--sub); font-size: 12px; }
+  .doc-prow-pr { color: var(--sub); font-family: inherit; }
+
+  /* 접기 블록 */
+  .doc-fold { border: 1px solid var(--line); border-radius: 12px; margin: 10px 0; background: var(--card); }
+  .doc-fold > summary { padding: 13px 14px; font-size: 15px; font-weight: 700; color: var(--ink);
+    cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+  .doc-fold > summary::before { content: "▸"; color: var(--red); font-size: 13px; transition: transform .15s; }
+  .doc-fold[open] > summary::before { transform: rotate(90deg); }
+  .doc-fold > summary::-webkit-details-marker { display: none; }
+  .doc-fold-body { padding: 0 14px 12px; border-top: 1px solid var(--line); padding-top: 10px; }
   .doc-table td { line-height: 1.5; }
 
   /* 교육자료 카테고리 */
@@ -352,7 +362,8 @@ async function loadEdu(key) {
   for (const d of snap.docs) {
     const data = d.data();
     try {
-      const dec = await decryptObj(key, data);  // { title, desc, body }
+      const dec = await decryptObj(key, data);  // { title, desc, body } 또는 { type:"img", ... }
+      if (dec.type === "img") continue;         // 분리 저장 이미지는 목록에서 숨김
       out.push({ id: d.id, order: data.order, ...dec });
     } catch (e) {
       out.push({ id: d.id, order: data.order, title: "🔒 열 수 없음", desc: "현재 비밀번호로 복호화 안 됨", body: "", _locked: true });
@@ -360,6 +371,29 @@ async function loadEdu(key) {
   }
   EDU = out;
   return EDU;
+}
+// 문서 렌더 후 data-eimg 이미지들을 개별 문서에서 복호화해 채운다(캐시 사용)
+const EIMG_CACHE = {};
+async function hydrateEduImages(root, skipFolded) {
+  let imgs = [...(root || document).querySelectorAll("img[data-eimg]")];
+  if (skipFolded) imgs = imgs.filter(el => !el.closest(".doc-fold") || el.closest(".doc-fold").open);
+  if (!imgs.length) return;
+  const key = await ensureEduKey();
+  if (!key) return;
+  const { db, fs } = await initFirebase();
+  for (const el of imgs) {
+    const id = el.getAttribute("data-eimg");
+    el.removeAttribute("data-eimg");
+    try {
+      if (!EIMG_CACHE[id]) {
+        const snap = await fs.getDoc(fs.doc(db, "edu", id));
+        if (!snap.exists()) continue;
+        const dec = await decryptObj(key, snap.data());
+        EIMG_CACHE[id] = dec.src;
+      }
+      el.src = EIMG_CACHE[id];
+    } catch (e) {}
+  }
 }
 // 교육자료 비밀번호: 코드엔 SHA-256 해시만(원문 없음). 검증 겸 암호화 키 유도에 사용.
 // 회사 문서가 들어가므로 내용은 AES-256으로 암호화해 Firestore에 저장한다.
@@ -577,6 +611,11 @@ function renderEduDoc(id) {
       $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(d.title)}</span>
         <button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button></div>
         <div class="doc">${md2html(d.body || "")}</div>`;
+      // 접기 밖 이미지는 즉시, 접힌 섹션 안 이미지는 펼칠 때 로드(데이터 절약)
+      hydrateEduImages($main.querySelector(".doc"), true);
+      $main.querySelectorAll(".doc-fold").forEach(dt => {
+        dt.addEventListener("toggle", () => { if (dt.open) hydrateEduImages(dt); });
+      });
       window.scrollTo(0, 0);
     };
     const cached = EDU && EDU.find(x => x.id === id);
@@ -757,8 +796,18 @@ function md2html(src) {
         PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === bc)));
       const nm = (m[2] || "").trim() || (prod ? prod.name : "(앱 데이터에 없는 제품)");
       const im = prod && prod._img ? `<img src="${esc(imgUrl(prod._img, 100))}" loading="lazy" alt="">` : '<span class="doc-prow-noimg"></span>';
+      const pr = prod && prod.price ? ` · ${prod.price.toLocaleString()}원` : "";
       html += `<div class="doc-prow" onclick="openByBarcode('${bc}')">${im}
-        <div class="doc-prow-tx"><div class="doc-prow-nm">${esc(nm)}</div><div class="doc-code">${bc}</div></div></div>`;
+        <div class="doc-prow-tx"><div class="doc-prow-nm">${esc(nm)}</div><div class="doc-code">${bc}<span class="doc-prow-pr">${pr}</span></div></div></div>`;
+    } else if ((m = line.match(/^\+\+\+\s*(.*)$/))) {
+      // 접기 블록: "+++ 제목"으로 열고 "+++" 단독 줄로 닫는다. 긴 문서를 최소화해 보여줄 때 사용
+      flushAll();
+      if (m[1].trim()) html += `<details class="doc-fold"><summary>${inline(m[1].trim())}</summary><div class="doc-fold-body">`;
+      else html += "</div></details>";
+    } else if ((m = line.match(/^!\[([^\]]*)\]\(eimg:([A-Za-z0-9]+)\)\s*$/))) {
+      // 분리 저장된 암호화 이미지: 본문 크기 제한을 피해 별도 문서에 담긴 이미지를 지연 로드
+      flushPara(); flushList();
+      html += `<img class="doc-img" data-eimg="${esc(m[2])}" alt="${esc(m[1])}">`;
     } else if ((m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/))) {
       // 이미지 한 줄: ![설명](url). alt가 "sm:"로 시작하면 작은 참고 이미지
       flushPara(); flushList();
