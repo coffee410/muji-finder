@@ -191,6 +191,13 @@
   .doc-table th { background: var(--bg); font-weight: 700; }
   .doc-table td { line-height: 1.5; }
 
+  /* 교육자료 카테고리 */
+  .edu-group { margin-bottom: 6px; }
+  .edu-cat { font-size: 12.5px; color: var(--red); font-weight: 700; margin: 16px 2px 7px;
+    display: flex; align-items: center; gap: 6px; }
+  .edu-cat::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .edu-cat b { font-weight: 400; color: var(--sub); font-size: 11.5px; }
+
   /* 교육자료 검색 */
   .edu-search { width: 100%; font-size: 15px; padding: 10px 12px; border: 1.5px solid var(--line);
     border-radius: 10px; background: var(--card); color: var(--ink); outline: none; margin-bottom: 10px; }
@@ -518,14 +525,26 @@ function renderEduList() {
       $main.innerHTML = head + '<div id="eduListArea"></div>' +
         '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.</footer>';
       const area = document.getElementById("eduListArea");
+      const card = d => `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
+          <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
       const drawCards = q => {
         const nq = norm(q);
         // 제목·설명·본문 전체에서 검색(공백 무시). 본문까지 뒤져 원하는 내용 바로 찾기.
         const list = nq ? docs.filter(d => norm(d.title + " " + (d.desc || "") + " " + (d.body || "")).includes(nq)) : docs;
         if (!docs.length) { area.innerHTML = '<div class="empty">아직 등록된 자료가 없습니다.<br>오른쪽 위 “+ 새 자료”로 추가해 주세요.</div>'; return; }
         if (!list.length) { area.innerHTML = '<div class="empty">"' + esc(q.trim()) + '" 검색 결과가 없습니다.</div>'; return; }
-        area.innerHTML = list.map(d => `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
-          <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`).join("");
+        // 카테고리(cat)별로 묶어서 표시. 검색 중에는 묶지 않고 결과만 나열.
+        if (nq) { area.innerHTML = list.map(card).join(""); return; }
+        const groups = [];
+        for (const d of list) {
+          const c = (d.cat || "").trim() || "기타";
+          let g = groups.find(x => x.cat === c);
+          if (!g) { g = { cat: c, items: [] }; groups.push(g); }
+          g.items.push(d);
+        }
+        area.innerHTML = groups.map(g =>
+          `<div class="edu-group"><h3 class="edu-cat">${esc(g.cat)} <b>${g.items.length}</b></h3>${g.items.map(card).join("")}</div>`
+        ).join("");
       };
       const se = document.getElementById("eduSearch");
       if (se) se.addEventListener("input", () => drawCards(se.value));
@@ -559,6 +578,7 @@ function currentEduForm() {
   return {
     title: document.getElementById("eduTitle").value,
     desc: document.getElementById("eduDesc").value,
+    cat: document.getElementById("eduCat").value,
     body: document.getElementById("eduBody").value,
     order: document.getElementById("eduOrder").value,
   };
@@ -574,10 +594,12 @@ function clearEduDraft(id) { localStorage.removeItem(eduDraftKey(id)); renderEdu
 function renderEduEdit(id) {
   setTab("edu");
   if (!eduAuthed()) { renderEduPw(id); return; }
-  const server = (EDU && EDU.find(x => x.id === id)) || { title: "", desc: "", body: "", order: 10 };
+  const server = (EDU && EDU.find(x => x.id === id)) || { title: "", desc: "", body: "", order: 10, cat: "" };
   const draft = loadEduDraft(id);
   const d = draft || server;
   const isNew = !id;
+  // 이미 쓰이는 카테고리를 추천 목록으로 제공
+  const cats = [...new Set((EDU || []).map(x => (x.cat || "").trim()).filter(Boolean))];
   $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button>
     <span class="path">${isNew ? "새 교육자료" : "자료 편집"}</span></div>
     <div class="eduform">
@@ -587,6 +609,9 @@ function renderEduEdit(id) {
       <input id="eduTitle" type="text" value="${esc(d.title)}" placeholder="예: 계산·POS 기본">
       <label>한 줄 설명</label>
       <input id="eduDesc" type="text" value="${esc(d.desc || "")}" placeholder="목록에 표시될 짧은 설명">
+      <label>카테고리 (목록에서 묶어서 보여줍니다)</label>
+      <input id="eduCat" type="text" list="eduCatList" value="${esc(d.cat || "")}" placeholder="예: 제품 지식">
+      <datalist id="eduCatList">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist>
       <label>내용 (마크다운: # 제목, - 목록, - [ ] 체크리스트, > 인용, **굵게**)</label>
       <textarea id="eduBody" rows="16" placeholder="# 제목&#10;&#10;내용을 입력하세요.">${esc(d.body || "")}</textarea>
       <label>정렬 순서 (작을수록 위, 숫자)</label>
@@ -639,6 +664,7 @@ async function submitEduPw(next) {
 async function saveEdu(id) {
   const title = document.getElementById("eduTitle").value.trim();
   const desc = document.getElementById("eduDesc").value.trim();
+  const cat = document.getElementById("eduCat").value.trim();
   const body = document.getElementById("eduBody").value;
   const order = Number(document.getElementById("eduOrder").value) || 10;
   if (!title) { toast("제목을 입력하세요"); return; }
@@ -647,7 +673,7 @@ async function saveEdu(id) {
   if (!key) { toast("비밀번호가 필요합니다"); renderEduPw("list"); return; }
   try {
     const { db, fs } = await initFirebase();
-    const encrypted = await encryptObj(key, { title, desc, body });  // 내용 암호화
+    const encrypted = await encryptObj(key, { title, desc, cat, body });  // 내용 암호화
     const data = { ...encrypted, order, updatedAt: fs.serverTimestamp() };
     if (id) await fs.setDoc(fs.doc(db, "edu", id), data);
     else await fs.addDoc(fs.collection(db, "edu"), data);
