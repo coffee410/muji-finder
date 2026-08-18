@@ -956,7 +956,8 @@ async function openScanner() {
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   scanReader = new ZXing.BrowserMultiFormatReader(hints);
   const video = document.getElementById("scanvideo");
-  const constraints = { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } };
+  // 화질↑: 해상도를 높게 요청(카메라가 지원하는 최대에 가깝게)
+  const constraints = { video: { facingMode: "environment", width: { ideal: 2560 }, height: { ideal: 1440 } } };
   document.getElementById("scanmsg").textContent = "바코드를 인식하면 자동으로 제품을 찾습니다";
   try {
     scanControls = await scanReader.decodeFromConstraints(constraints, video, (result) => {
@@ -965,10 +966,27 @@ async function openScanner() {
         if (/^\d{8,14}$/.test(code)) { scanHandled = true; onScanned(code); }
       }
     });
+    // 근접 초점 개선(지원하는 기기에서 자동 연속 초점 켜기 → 흐림 방지)
+    tuneCameraFocus(video);
   } catch (e) {
     closeScanner();
     toast(e && e.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "카메라를 열 수 없습니다");
   }
+}
+// 카메라 트랙에 연속 자동초점을 적용해 근접 바코드가 또렷하게 잡히도록 한다(지원 기기 한정)
+async function tuneCameraFocus(video) {
+  try {
+    const stream = video.srcObject;
+    const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    if (!track || !track.getCapabilities || !track.applyConstraints) return;
+    const caps = track.getCapabilities();
+    const adv = [];
+    if (caps.focusMode && caps.focusMode.includes("continuous")) adv.push({ focusMode: "continuous" });
+    if (adv.length) await track.applyConstraints({ advanced: adv });
+    const st = track.getSettings ? track.getSettings() : {};
+    document.getElementById("scanmsg").textContent =
+      "바코드를 인식하면 자동으로 제품을 찾습니다" + (st.width ? " (" + st.width + "×" + st.height + ")" : "");
+  } catch (e) {}
 }
 function onScanned(code) {
   if (navigator.vibrate) navigator.vibrate(120);
