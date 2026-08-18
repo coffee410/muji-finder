@@ -518,7 +518,7 @@ function grid(items, limit, moreCall) {
   let html = '<div class="grid">';
   for (const p of items.slice(0, limit)) {
     const img = p._img
-      ? `<img src="${esc(p._img)}" loading="lazy" alt="">`
+      ? `<img src="${esc(imgUrl(p._img, 300))}" loading="lazy" decoding="async" alt="">`
       : '<span class="noimg">이미지 없음</span>';
     const badge = p.state === "SOLDOUT" ? '<span class="soldout-badge">품절</span>' : "";
     html += `<div class="pcard" onclick='nav({view:"product",id:${p.id}})'>
@@ -541,7 +541,7 @@ function openDetail(id) {
   if (!imgs.length && p._img) imgs = [p._img];
   let html = `<div class="d-head"><button onclick="history.back()">← 뒤로</button><span>제품 상세</span></div><div class="d-body">`;
   if (imgs.length) {
-    html += '<div class="d-imgs">' + imgs.slice(0, 6).map(u => `<img src="${esc(u)}" loading="lazy" alt="">`).join("") + "</div>";
+    html += '<div class="d-imgs">' + imgs.slice(0, 6).map(u => `<img src="${esc(imgUrl(u, 800))}" loading="lazy" decoding="async" alt="">`).join("") + "</div>";
   }
   html += `<div class="namebox">
     <div class="lbl">정확한 제품명 (인트라넷 검색용)</div>
@@ -552,7 +552,7 @@ function openDetail(id) {
   <div class="warn">⚠ 인트라넷 제품명 검색은 띄어쓰기가 정확해야 합니다. 위 이름을 그대로 복사해서 쓰세요.</div>`;
 
   for (const c of p.colors) {
-    const chip = c.img ? `<img src="${esc(c.img)}" alt="">` : "";
+    const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
     const title = c.color && c.color !== "단품" ? esc(c.color) : "기본";
     html += `<div class="colorblock"><div class="ctitle">${chip}${title}</div>`;
     if (!c.sizes.length) html += '<div class="warn" style="margin:0">바코드 정보 없음</div>';
@@ -597,6 +597,12 @@ function toast(msg) {
 }
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+// 무인양품 이미지 서버는 ?w=로 리사이즈를 지원한다. 원본은 수백 KB~수 MB라
+// 그리드 썸네일에 그대로 쓰면 매우 느리다. 용도별 크기로 축소해 대역폭을 아낀다.
+function imgUrl(url, w) {
+  if (!url || url.indexOf("product.mujikorea.co.kr") === -1) return url;
+  return url + (url.indexOf("?") >= 0 ? "&" : "?") + "w=" + w;
 }
 
 /* ---------- 바코드 카메라 스캔 ---------- */
