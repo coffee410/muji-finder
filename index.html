@@ -195,6 +195,14 @@
   .doc-table td .doc-plink { white-space: nowrap; }
   .doc-code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px;
     letter-spacing: 0.3px; user-select: all; }
+  .doc-prow { display: flex; align-items: center; gap: 11px; padding: 8px 2px;
+    border-top: 1px dashed var(--line); cursor: pointer; }
+  .doc-prow:active { background: var(--bg); }
+  .doc-prow img, .doc-prow-noimg { width: 46px; height: 46px; flex-shrink: 0;
+    border-radius: 8px; border: 1px solid var(--line); object-fit: cover; background: #f0eeeb; }
+  .doc-prow-tx { min-width: 0; }
+  .doc-prow-nm { font-size: 13.5px; line-height: 1.35; color: var(--ink); font-weight: 600; }
+  .doc-prow .doc-code { color: var(--sub); font-size: 12px; }
   .doc-table td { line-height: 1.5; }
 
   /* 교육자료 카테고리 */
@@ -740,6 +748,16 @@ function md2html(src) {
       html += `<${tag}>${inline(m[2])}</${tag}>`;
     } else if (/^---+$/.test(line.trim())) {
       flushPara(); flushList(); html += "<hr>";
+    } else if ((m = line.match(/^@p\s+(\d{8,14})\s*$/))) {
+      // 제품 행: "@p 바코드" → 썸네일+제품명+코드 카드(누르면 상세). 모바일 폭에 맞춘 세로 나열용
+      flushPara(); flushList();
+      const bc = m[1];
+      const prod = (typeof PRODUCTS !== "undefined") &&
+        PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === bc)));
+      const nm = prod ? prod.name : "(앱 데이터에 없는 제품)";
+      const im = prod && prod._img ? `<img src="${esc(imgUrl(prod._img, 100))}" loading="lazy" alt="">` : '<span class="doc-prow-noimg"></span>';
+      html += `<div class="doc-prow" onclick="openByBarcode('${bc}')">${im}
+        <div class="doc-prow-tx"><div class="doc-prow-nm">${esc(nm)}</div><div class="doc-code">${bc}</div></div></div>`;
     } else if ((m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/))) {
       // 이미지 한 줄: ![설명](url). alt가 "sm:"로 시작하면 작은 참고 이미지
       flushPara(); flushList();
