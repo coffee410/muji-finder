@@ -487,7 +487,7 @@ function renderEduEdit(id) {
     <span class="path">${isNew ? "새 교육자료" : "자료 편집"}</span></div>
     <div class="eduform">
       ${draft ? `<div class="edu-draft">✎ 임시저장한 내용을 불러왔습니다.
-        <button onclick="clearEduDraft(${JSON.stringify(id)})">임시저장 버리기</button></div>` : ""}
+        <button id="eduDraftClear">임시저장 버리기</button></div>` : ""}
       <label>제목</label>
       <input id="eduTitle" type="text" value="${esc(d.title)}" placeholder="예: 계산·POS 기본">
       <label>한 줄 설명</label>
@@ -497,12 +497,18 @@ function renderEduEdit(id) {
       <label>정렬 순서 (작을수록 위, 숫자)</label>
       <input id="eduOrder" type="number" value="${Number(d.order) || 10}">
       <div class="eduform-btns">
-        <button class="edu-save" onclick="saveEdu(${JSON.stringify(id)})">저장</button>
-        <button class="edu-draft-btn" onclick="saveEduDraft(${JSON.stringify(id)})">임시저장</button>
-        ${isNew ? "" : `<button class="edu-del" onclick="deleteEdu(${JSON.stringify(id)})">삭제</button>`}
+        <button class="edu-save" id="eduSaveBtn">저장</button>
+        <button class="edu-draft-btn" id="eduDraftSaveBtn">임시저장</button>
+        ${isNew ? "" : `<button class="edu-del" id="eduDelBtn">삭제</button>`}
       </div>
       <div class="warn" style="margin:10px 2px">‘저장’은 모두에게 공유됩니다. ‘임시저장’은 이 기기에만 보관되어 나중에 이어서 쓸 수 있습니다.</div>
     </div>`;
+  document.getElementById("eduSaveBtn").addEventListener("click", () => saveEdu(id));
+  document.getElementById("eduDraftSaveBtn").addEventListener("click", () => saveEduDraft(id));
+  const delBtn = document.getElementById("eduDelBtn");
+  if (delBtn) delBtn.addEventListener("click", () => deleteEdu(id));
+  const clearBtn = document.getElementById("eduDraftClear");
+  if (clearBtn) clearBtn.addEventListener("click", () => clearEduDraft(id));
   ["eduTitle", "eduDesc", "eduBody", "eduOrder"].forEach(fid => {
     const el = document.getElementById(fid);
     if (el) el.addEventListener("input", () => autoSaveEduDraft(id));
@@ -514,11 +520,14 @@ function renderEduPw(id) {
   $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button><span class="path">편집 비밀번호</span></div>
     <div class="eduform">
       <label>매장 공용 편집 비밀번호를 입력하세요</label>
-      <input id="eduPw" type="password" placeholder="비밀번호" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitEduPw(${JSON.stringify(id)})">
-      <div class="eduform-btns"><button class="edu-save" onclick="submitEduPw(${JSON.stringify(id)})">확인</button></div>
+      <input id="eduPw" type="password" placeholder="비밀번호" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false">
+      <div class="eduform-btns"><button class="edu-save" id="eduPwBtn">확인</button></div>
       <div class="warn" style="margin:8px 2px">읽기는 비밀번호 없이 누구나 가능합니다. 편집·추가·삭제만 비밀번호가 필요합니다.</div>
     </div>`;
-  setTimeout(() => { const el = document.getElementById("eduPw"); if (el) el.focus(); }, 50);
+  const inp = document.getElementById("eduPw");
+  document.getElementById("eduPwBtn").addEventListener("click", () => submitEduPw(id));
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") submitEduPw(id); });
+  setTimeout(() => inp.focus(), 50);
 }
 async function submitEduPw(id) {
   // 대소문자·앞뒤 공백 무시(모바일 키보드 자동 대문자화 대응)
