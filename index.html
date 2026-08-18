@@ -189,6 +189,12 @@
   .doc-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
   .doc-table th, .doc-table td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
   .doc-table th { background: var(--bg); font-weight: 700; }
+  .doc-plink { color: var(--red); font-weight: 600; text-decoration: none;
+    border-bottom: 1px solid var(--red); cursor: pointer; }
+  .doc-link { color: var(--red); }
+  .doc-table td .doc-plink { white-space: nowrap; }
+  .doc-code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px;
+    letter-spacing: 0.3px; user-select: all; }
   .doc-table td { line-height: 1.5; }
 
   /* 교육자료 카테고리 */
@@ -697,9 +703,15 @@ async function deleteEdu(id) {
     toast("삭제 실패: " + (e && e.code || "오류"));
   }
 }
-// 최소한의 마크다운 변환: 제목/목록/체크리스트/인용/굵게/구분선
+// 최소한의 마크다운 변환: 제목/목록/체크리스트/인용/굵게/구분선/링크
+// 링크는 두 가지: [이름](p:바코드) = 앱 안에서 제품 상세 열기, [이름](https://…) = 새 탭
 function md2html(src) {
-  const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  const inline = s => esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\(p:(\d{8,14})\)/g,
+      '<a class="doc-plink" href="#" onclick="openByBarcode(\'$2\');return false;">$1</a>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a class="doc-link" href="$2" target="_blank" rel="noopener">$1</a>');
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   let html = "", list = null, para = [], table = [];
   const flushPara = () => { if (para.length) { html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
@@ -912,6 +924,12 @@ function openDetail(id) {
   $detail.scrollTop = 0;
 }
 function closeDetail() { $detail.classList.remove("open"); }
+// 교육자료의 [이름](p:바코드) 링크 → 그 바코드를 가진 제품 상세를 연다
+function openByBarcode(bc) {
+  const p = PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === bc)));
+  if (p) nav({ view: "product", id: p.id });
+  else toast("앱 데이터에 없는 제품입니다 (" + bc + ")");
+}
 
 /* ---------- 복사 & 토스트 ---------- */
 function copyText(text, msg) {
