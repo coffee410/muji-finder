@@ -182,6 +182,13 @@
   .doc li.chk { list-style: none; margin-left: -20px; }
   .doc blockquote { border-left: 3px solid var(--line); padding: 2px 12px; color: var(--sub); font-size: 13px; margin: 10px 0; }
   .doc hr { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
+  .doc-img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line);
+    border-radius: 8px; margin: 12px 0; }
+
+  /* 교육자료 검색 */
+  .edu-search { width: 100%; font-size: 15px; padding: 10px 12px; border: 1.5px solid var(--line);
+    border-radius: 10px; background: var(--card); color: var(--ink); outline: none; margin-bottom: 10px; }
+  .edu-search:focus { border-color: var(--red); }
 
   /* 교육자료 편집 */
   .edu-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -491,17 +498,24 @@ function renderEduList() {
     if (!key) { renderEduPw("list"); return; }
     $main.innerHTML = '<div class="loading">교육자료 불러오는 중…</div>';
     loadEdu(key).then(docs => {
-      let html = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
-        '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>';
-      if (!docs.length) {
-        html += '<div class="empty">아직 등록된 자료가 없습니다.<br>오른쪽 위 “+ 새 자료”로 추가해 주세요.</div>';
-      }
-      for (const d of docs) {
-        html += `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
-          <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
-      }
-      html += '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.</footer>';
-      $main.innerHTML = html;
+      const head = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
+        '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>' +
+        (docs.length ? '<input class="edu-search" id="eduSearch" type="search" placeholder="교육자료 검색 (제목·내용)" autocomplete="off">' : '');
+      $main.innerHTML = head + '<div id="eduListArea"></div>' +
+        '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.</footer>';
+      const area = document.getElementById("eduListArea");
+      const drawCards = q => {
+        const nq = norm(q);
+        // 제목·설명·본문 전체에서 검색(공백 무시). 본문까지 뒤져 원하는 내용 바로 찾기.
+        const list = nq ? docs.filter(d => norm(d.title + " " + (d.desc || "") + " " + (d.body || "")).includes(nq)) : docs;
+        if (!docs.length) { area.innerHTML = '<div class="empty">아직 등록된 자료가 없습니다.<br>오른쪽 위 “+ 새 자료”로 추가해 주세요.</div>'; return; }
+        if (!list.length) { area.innerHTML = '<div class="empty">"' + esc(q.trim()) + '" 검색 결과가 없습니다.</div>'; return; }
+        area.innerHTML = list.map(d => `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
+          <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`).join("");
+      };
+      const se = document.getElementById("eduSearch");
+      if (se) se.addEventListener("input", () => drawCards(se.value));
+      drawCards("");
       window.scrollTo(0, 0);
     }).catch(e => {
       $main.innerHTML = '<div class="empty">교육자료를 불러오지 못했습니다.<br>인터넷 연결을 확인해 주세요.<br><span style="font-size:11px">' + esc(String(e)) + '</span></div>';
@@ -660,6 +674,10 @@ function md2html(src) {
       html += `<${tag}>${inline(m[2])}</${tag}>`;
     } else if (/^---+$/.test(line.trim())) {
       flushPara(); flushList(); html += "<hr>";
+    } else if ((m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/))) {
+      // 이미지 한 줄: ![설명](data:image/... 또는 URL)
+      flushPara(); flushList();
+      html += `<img class="doc-img" src="${esc(m[2])}" alt="${esc(m[1])}" loading="lazy">`;
     } else if ((m = line.match(/^>\s?(.*)/))) {
       flushPara(); flushList(); html += "<blockquote>" + inline(m[1]) + "</blockquote>";
     } else if ((m = line.match(/^[-*]\s+\[( |x|X)\]\s+(.*)/))) {
