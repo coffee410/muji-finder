@@ -174,6 +174,45 @@
   .doc li.chk { list-style: none; margin-left: -20px; }
   .doc blockquote { border-left: 3px solid var(--line); padding: 2px 12px; color: var(--sub); font-size: 13px; margin: 10px 0; }
   .doc hr { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
+
+  /* 검색줄 + 스캔 버튼 */
+  .searchrow { display: flex; gap: 8px; align-items: stretch; }
+  .searchrow .searchwrap { flex: 1; }
+  #scanbtn {
+    flex-shrink: 0; width: 48px; border: 1.5px solid var(--line); border-radius: 12px;
+    background: var(--card); color: var(--red); font-size: 22px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #scanbtn:active { background: var(--bg); }
+
+  /* 바코드 스캐너 오버레이 */
+  #scanner {
+    position: fixed; inset: 0; z-index: 80; background: #000;
+    display: none; flex-direction: column;
+  }
+  #scanner.open { display: flex; }
+  #scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .scan-head {
+    position: relative; z-index: 3; display: flex; align-items: center; gap: 12px;
+    padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
+    background: linear-gradient(#000c, #0000); color: #fff;
+  }
+  .scan-head button { border: 1px solid #fff6; background: #0006; color: #fff;
+    border-radius: 10px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+  .scan-head span { font-size: 13px; color: #fff; opacity: .9; }
+  .scan-mask { position: absolute; inset: 0; z-index: 1;
+    background: #00000073; pointer-events: none; }
+  .scan-frame {
+    position: relative; z-index: 2; margin: auto; width: 74%; max-width: 320px; aspect-ratio: 1.4;
+    border: 2px solid #fff; border-radius: 14px;
+  }
+  .scan-frame::after { content: ""; position: absolute; left: 8px; right: 8px; top: 50%;
+    height: 2px; background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .scan-msg {
+    position: relative; z-index: 3; text-align: center; color: #fff; font-size: 14px;
+    padding: 16px 24px calc(env(safe-area-inset-bottom) + 24px); line-height: 1.6;
+    background: linear-gradient(#0000, #000c);
+  }
 </style>
 </head>
 <body>
@@ -186,16 +225,31 @@
     <button id="tabFind" class="on" onclick="goTab('find')">제품 찾기</button>
     <button id="tabEdu" onclick="goTab('edu')">교육자료</button>
   </nav>
-  <div class="searchwrap" id="searchwrap">
-    <input id="q" type="search" placeholder="제품명, 초성(ㅍㄹㅍㄹㅍㄹ), 바코드 숫자" autocomplete="off">
-    <button id="clearq" aria-label="지우기">✕</button>
+  <div class="searchrow" id="searchrow">
+    <div class="searchwrap">
+      <input id="q" type="search" placeholder="제품명, 초성(ㅍㄹㅍㄹㅍㄹ), 바코드 숫자" autocomplete="off">
+      <button id="clearq" aria-label="지우기">✕</button>
+    </div>
+    <button id="scanbtn" onclick="openScanner()" aria-label="바코드 스캔">📷</button>
   </div>
-  <div class="hint" id="searchhint">띄어쓰기 몰라도 검색됩니다 · 초성만 쳐도 OK</div>
+  <div class="hint" id="searchhint">띄어쓰기 몰라도 검색됩니다 · 초성만 쳐도 OK · 📷로 바코드 스캔</div>
 </header>
 
 <main id="main"><div class="loading">제품 데이터 불러오는 중…</div></main>
 
 <div id="detail"></div>
+
+<div id="scanner">
+  <div class="scan-head">
+    <button onclick="closeScanner()">✕ 닫기</button>
+    <span>바코드를 네모 칸 안에 맞춰주세요</span>
+  </div>
+  <video id="scanvideo" playsinline muted></video>
+  <div class="scan-mask"></div>
+  <div class="scan-frame"></div>
+  <div class="scan-msg" id="scanmsg">바코드를 인식하면 자동으로 제품을 찾습니다</div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -290,7 +344,7 @@ function setTab(which) {
   document.getElementById("tabFind").classList.toggle("on", which === "find");
   document.getElementById("tabEdu").classList.toggle("on", which === "edu");
   const show = which === "find" ? "" : "none";
-  document.getElementById("searchwrap").style.display = show;
+  document.getElementById("searchrow").style.display = show === "" ? "flex" : "none";
   document.getElementById("searchhint").style.display = show;
 }
 function goTab(which) {
@@ -544,6 +598,80 @@ function toast(msg) {
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+
+/* ---------- 바코드 카메라 스캔 ---------- */
+// 브라우저 내장 BarcodeDetector 사용(라이브러리 없음). 미지원(iOS 등)이면 버튼 숨김.
+let scanStream = null, scanDetector = null, scanRAF = null, scanBusy = false;
+if (!("BarcodeDetector" in window)) {
+  const b = document.getElementById("scanbtn");
+  if (b) b.style.display = "none";
+}
+async function openScanner() {
+  if (!("BarcodeDetector" in window)) { toast("이 브라우저는 카메라 스캔을 지원하지 않아요"); return; }
+  // 카메라는 보안 컨텍스트(https 또는 localhost)에서만 열림
+  if (!navigator.mediaDevices || !window.isSecureContext) {
+    toast("카메라는 https 주소에서만 됩니다"); return;
+  }
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch (e) {
+    toast(e && e.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "카메라를 열 수 없습니다");
+    return;
+  }
+  const v = document.getElementById("scanvideo");
+  v.srcObject = scanStream;
+  try { await v.play(); } catch (e) {}
+  try {
+    scanDetector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "code_128"] });
+  } catch (e) {
+    scanDetector = new BarcodeDetector();
+  }
+  document.getElementById("scanmsg").textContent = "바코드를 인식하면 자동으로 제품을 찾습니다";
+  document.getElementById("scanner").classList.add("open");
+  scanBusy = false;
+  scanLoop();
+}
+async function scanLoop() {
+  if (!scanStream) return;
+  const v = document.getElementById("scanvideo");
+  if (!scanBusy && v.readyState >= 2) {
+    scanBusy = true;
+    try {
+      const codes = await scanDetector.detect(v);
+      if (codes && codes.length) {
+        const code = (codes[0].rawValue || "").trim();
+        if (/^\d{8,14}$/.test(code)) { onScanned(code); return; }
+      }
+    } catch (e) {}
+    scanBusy = false;
+  }
+  scanRAF = requestAnimationFrame(scanLoop);
+}
+function onScanned(code) {
+  if (navigator.vibrate) navigator.vibrate(120);
+  closeScanner();
+  // 스캔한 바코드와 정확히 일치하는 제품이 있으면 바로 상세로, 없으면 번호로 검색
+  const hit = PRODUCTS.find(p => p.colors.some(c => c.sizes.some(s => s.barcode === code)));
+  if (hit) {
+    nav({ view: "product", id: hit.id });
+  } else {
+    $q.value = code;
+    $clearq.style.display = "block";
+    history.pushState({}, "", "#");
+    renderSearch(code);
+    toast("일치 제품 없음 · 번호로 검색");
+  }
+}
+function closeScanner() {
+  if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF = null; }
+  if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  const v = document.getElementById("scanvideo");
+  if (v) v.srcObject = null;
+  document.getElementById("scanner").classList.remove("open");
+}
+// 앱이 백그라운드로 가거나 페이지를 떠날 때 카메라 정리
+document.addEventListener("visibilitychange", () => { if (document.hidden) closeScanner(); });
+window.addEventListener("pagehide", closeScanner);
 </script>
 </body>
 </html>
