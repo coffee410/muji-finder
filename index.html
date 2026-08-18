@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#7f0019">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>MUJI 제품 찾기</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --red: #7f0019;
+    --bg: #f7f6f4;
+    --card: #ffffff;
+    --ink: #1c1c1c;
+    --sub: #8a8681;
+    --line: #e8e5e1;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    background: var(--bg); color: var(--ink);
+    max-width: 640px; margin: 0 auto;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg);
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .brand h1 { font-size: 17px; letter-spacing: -0.3px; }
+  .brand h1 b { color: var(--red); }
+  .brand .upd { font-size: 11px; color: var(--sub); }
+  .searchwrap { position: relative; }
+  #q {
+    width: 100%; font-size: 16px; padding: 12px 40px 12px 14px;
+    border: 1.5px solid var(--line); border-radius: 12px;
+    background: var(--card); color: var(--ink); outline: none;
+  }
+  #q:focus { border-color: var(--red); }
+  #clearq {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    border: 0; background: none; font-size: 18px; color: var(--sub);
+    padding: 8px; display: none; cursor: pointer;
+  }
+  .hint { font-size: 11px; color: var(--sub); margin-top: 6px; }
+  main { padding: 12px 16px 60px; }
+  .loading { text-align: center; color: var(--sub); padding: 48px 0; font-size: 14px; }
+
+  /* 카테고리 홈 */
+  .cat-top {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 4px;
+  }
+  .cat-top button {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 12px; font-size: 15px; text-align: left; color: var(--ink); cursor: pointer;
+  }
+  .cat-top button span { display: block; font-size: 11px; color: var(--sub); margin-top: 3px; }
+  .sec-title { font-size: 13px; color: var(--sub); margin: 18px 0 8px; }
+
+  /* 하위 카테고리 */
+  .crumb { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .crumb button.back {
+    border: 1px solid var(--line); background: var(--card); border-radius: 10px;
+    padding: 8px 12px; font-size: 14px; cursor: pointer; color: var(--ink);
+  }
+  .crumb .path { font-size: 14px; color: var(--sub); }
+  .leaf-group { margin-bottom: 14px; }
+  .leaf-group h3 { font-size: 13px; color: var(--sub); font-weight: 600; margin: 12px 0 6px; }
+  .leaf-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .leaf-list button {
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    border-radius: 999px; padding: 8px 13px; font-size: 13.5px; cursor: pointer;
+  }
+  .leaf-list button b { color: var(--sub); font-weight: 400; font-size: 12px; }
+
+  /* 제품 그리드 / 검색결과 */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pcard {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; cursor: pointer; display: flex; flex-direction: column;
+  }
+  .pcard .ph { aspect-ratio: 1; background: #f0eeeb; display: flex; align-items: center; justify-content: center; }
+  .pcard .ph img { width: 100%; height: 100%; object-fit: cover; }
+  .pcard .ph .noimg { font-size: 11px; color: var(--sub); }
+  .pcard .nm { font-size: 12px; padding: 7px 8px 2px; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 34px; }
+  .pcard .pr { font-size: 12px; color: var(--sub); padding: 0 8px 8px; }
+  .soldout-badge { display: inline-block; font-size: 10px; color: #fff; background: #b3aca4; border-radius: 4px; padding: 1px 5px; margin-right: 4px; vertical-align: 1px; }
+  .rescount { font-size: 13px; color: var(--sub); margin: 2px 0 10px; }
+  .more { width: 100%; margin-top: 12px; padding: 12px; font-size: 14px; border: 1px solid var(--line); background: var(--card); border-radius: 12px; cursor: pointer; color: var(--ink); }
+  .empty { text-align: center; color: var(--sub); padding: 40px 12px; font-size: 14px; line-height: 1.6; }
+
+  /* 상세 */
+  #detail {
+    position: fixed; inset: 0; z-index: 50; background: var(--bg);
+    max-width: 640px; margin: 0 auto; overflow-y: auto;
+    display: none; padding-bottom: 40px;
+  }
+  #detail.open { display: block; }
+  .d-head { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line);
+    padding: 12px 16px; display: flex; align-items: center; gap: 10px; z-index: 5; }
+  .d-head button { border: 1px solid var(--line); background: var(--card); border-radius: 10px;
+    padding: 8px 14px; font-size: 14px; cursor: pointer; color: var(--ink); }
+  .d-head span { font-size: 13px; color: var(--sub); }
+  .d-body { padding: 16px; }
+  .d-imgs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; }
+  .d-imgs img { height: 150px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
+  .namebox {
+    background: var(--card); border: 1.5px solid var(--red); border-radius: 12px;
+    padding: 14px; margin-bottom: 8px;
+  }
+  .namebox .lbl { font-size: 11px; color: var(--red); font-weight: 700; margin-bottom: 5px; }
+  .namebox .nm { font-size: 17px; font-weight: 700; line-height: 1.45; word-break: keep-all; user-select: all; }
+  .namebox .pr { font-size: 13px; color: var(--sub); margin-top: 5px; }
+  .copybtn {
+    margin-top: 10px; width: 100%; padding: 11px; font-size: 14px; font-weight: 600;
+    border: 0; border-radius: 10px; background: var(--red); color: #fff; cursor: pointer;
+  }
+  .warn { font-size: 11.5px; color: var(--sub); margin: 8px 2px 16px; line-height: 1.5; }
+  .colorblock { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .colorblock .ctitle { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .colorblock .ctitle img { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; border: 1px solid var(--line); }
+  .bcrow {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 2px; border-top: 1px dashed var(--line); gap: 8px;
+  }
+  .bcrow .sz { font-size: 13.5px; min-width: 44px; }
+  .bcrow .sz .st { color: #b0473a; font-size: 11px; }
+  .bcrow .bc {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 16.5px; letter-spacing: 0.5px; user-select: all;
+  }
+  .bcrow button {
+    border: 1px solid var(--line); background: var(--bg); border-radius: 8px;
+    padding: 7px 12px; font-size: 12.5px; cursor: pointer; color: var(--ink); flex-shrink: 0;
+  }
+  .d-cats { font-size: 12px; color: var(--sub); margin-top: 14px; line-height: 1.6; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(20px);
+    background: var(--ink); color: #fff; font-size: 14px; padding: 11px 20px;
+    border-radius: 999px; opacity: 0; transition: all .2s; z-index: 99; pointer-events: none;
+    white-space: nowrap;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  footer { text-align: center; font-size: 11px; color: var(--sub); padding: 24px 16px; line-height: 1.6; }
+
+  /* 탭 */
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tabs button {
+    flex: 1; padding: 9px 0; font-size: 14px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--sub);
+  }
+  .tabs button.on { background: var(--red); border-color: var(--red); color: #fff; }
+
+  /* 교육자료 */
+  .edu-card {
+    display: block; width: 100%; text-align: left; background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 8px; cursor: pointer;
+  }
+  .edu-card .t { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .edu-card .d { font-size: 12.5px; color: var(--sub); margin-top: 4px; line-height: 1.5; }
+  .doc { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; line-height: 1.7; }
+  .doc h2 { font-size: 19px; margin: 4px 0 12px; }
+  .doc h3 { font-size: 15.5px; margin: 18px 0 8px; color: var(--red); }
+  .doc h4 { font-size: 14px; margin: 14px 0 6px; }
+  .doc p { font-size: 14px; margin: 8px 0; }
+  .doc ul, .doc ol { font-size: 14px; padding-left: 22px; margin: 8px 0; }
+  .doc li { margin: 4px 0; }
+  .doc li.chk { list-style: none; margin-left: -20px; }
+  .doc blockquote { border-left: 3px solid var(--line); padding: 2px 12px; color: var(--sub); font-size: 13px; margin: 10px 0; }
+  .doc hr { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1><b>MUJI</b> 제품 찾기</h1>
+    <span class="upd" id="upd"></span>
+  </div>
+  <nav class="tabs">
+    <button id="tabFind" class="on" onclick="goTab('find')">제품 찾기</button>
+    <button id="tabEdu" onclick="goTab('edu')">교육자료</button>
+  </nav>
+  <div class="searchwrap" id="searchwrap">
+    <input id="q" type="search" placeholder="제품명, 초성(ㅍㄹㅍㄹㅍㄹ), 바코드 숫자" autocomplete="off">
+    <button id="clearq" aria-label="지우기">✕</button>
+  </div>
+  <div class="hint" id="searchhint">띄어쓰기 몰라도 검색됩니다 · 초성만 쳐도 OK</div>
+</header>
+
+<main id="main"><div class="loading">제품 데이터 불러오는 중…</div></main>
+
+<div id="detail"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+let DB = null;          // 전체 데이터
+let PRODUCTS = [];      // 검색 인덱스 포함 제품 배열
+let CATTREE = {};       // top -> mid -> [{leafPath, count}]
+const $main = document.getElementById("main");
+const $detail = document.getElementById("detail");
+const $q = document.getElementById("q");
+const $clearq = document.getElementById("clearq");
+
+/* ---------- 한글 유틸 ---------- */
+const CHO = ["ㄱ","ㄲ","ㄴ","ㄷ","ㄸ","ㄹ","ㅁ","ㅂ","ㅃ","ㅅ","ㅆ","ㅇ","ㅈ","ㅉ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"];
+function chosung(str) {
+  let out = "";
+  for (const ch of str) {
+    const c = ch.codePointAt(0);
+    if (c >= 0xAC00 && c <= 0xD7A3) out += CHO[Math.floor((c - 0xAC00) / 588)];
+    else out += ch;
+  }
+  return out;
+}
+// 검색 비교용 정규화: 공백·중점·괄호류 제거 + 소문자
+function norm(str) {
+  return (str || "").toLowerCase().replace(/[\sㆍㆍ··()\[\]\-_,./]/g, "");
+}
+function isChosungQuery(s) { return /^[ㄱ-ㅎ]+$/.test(s); }
+
+/* ---------- 데이터 로드 ---------- */
+fetch("./data/products.json")
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  .then(init)
+  .catch(e => {
+    $main.innerHTML = '<div class="empty">데이터를 불러오지 못했습니다.<br>' + e + "</div>";
+  });
+
+function init(db) {
+  DB = db;
+  document.getElementById("upd").textContent = db.updated + " 기준 · " + db.count.toLocaleString() + "개";
+  PRODUCTS = db.products.map(p => {
+    const barcodes = [];
+    for (const c of p.colors) for (const s of c.sizes) barcodes.push(s.barcode);
+    return {
+      ...p,
+      _n: norm(p.name),
+      _c: chosung(norm(p.name)),
+      _b: barcodes.join(" "),
+      _img: firstImg(p),
+    };
+  });
+  buildCatTree();
+  route();
+}
+function firstImg(p) {
+  // 실제 제품 사진(imgs)을 우선하고, 없을 때만 색상 칩(img·원단 확대컷)을 쓴다
+  for (const c of p.colors) if (c.imgs && c.imgs[0]) return c.imgs[0];
+  for (const c of p.colors) if (c.img) return c.img;
+  return null;
+}
+function buildCatTree() {
+  CATTREE = {};
+  for (const p of PRODUCTS) {
+    for (const cat of p.cats) {
+      const parts = cat.split(" > ");
+      const top = parts[0] || "기타";
+      const mid = parts.length >= 3 ? parts[1] : (parts[1] || "전체");
+      if (!CATTREE[top]) CATTREE[top] = {};
+      if (!CATTREE[top][mid]) CATTREE[top][mid] = {};
+      if (!CATTREE[top][mid][cat]) CATTREE[top][mid][cat] = 0;
+      CATTREE[top][mid][cat]++;
+    }
+  }
+}
+
+/* ---------- 라우팅 (뒤로가기 지원) ---------- */
+window.addEventListener("popstate", route);
+function nav(state) { history.pushState(state, "", "#"); route(); }
+function route() {
+  const s = history.state || {};
+  closeDetail();
+  if (s.view === "edu") { renderEduList(); return; }
+  if (s.view === "edudoc") { renderEduDoc(s.file, s.title); return; }
+  setTab("find");
+  if (s.view === "product") { openDetail(s.id); return; }
+  if (s.view === "cat") { renderCat(s.top); return; }
+  if (s.view === "leaf") { renderLeaf(s.leaf); return; }
+  if ($q.value.trim()) { renderSearch($q.value); return; }
+  renderHome();
+}
+function setTab(which) {
+  document.getElementById("tabFind").classList.toggle("on", which === "find");
+  document.getElementById("tabEdu").classList.toggle("on", which === "edu");
+  const show = which === "find" ? "" : "none";
+  document.getElementById("searchwrap").style.display = show;
+  document.getElementById("searchhint").style.display = show;
+}
+function goTab(which) {
+  if (which === "edu") nav({ view: "edu" });
+  else { history.pushState({}, "", "#"); route(); }
+}
+
+/* ---------- 교육자료 ---------- */
+let EDUIDX = null;
+const EDUDOCS = {};
+function renderEduList() {
+  setTab("edu");
+  const draw = () => {
+    let html = '<div class="sec-title">신입 교육자료</div>';
+    for (const d of EDUIDX.docs) {
+      html += `<button class="edu-card" onclick='nav({view:"edudoc",file:${JSON.stringify(d.file)},title:${JSON.stringify(d.title)}})'>
+        <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
+    }
+    html += '<footer>자료 추가·수정: web/edu 폴더의 md 파일을 편집하세요.</footer>';
+    $main.innerHTML = html;
+    window.scrollTo(0, 0);
+  };
+  if (EDUIDX) { draw(); return; }
+  $main.innerHTML = '<div class="loading">교육자료 목록 불러오는 중…</div>';
+  fetch("./edu/index.json").then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(j => { EDUIDX = j; draw(); })
+    .catch(e => { $main.innerHTML = '<div class="empty">교육자료 목록을 불러오지 못했습니다.<br>' + e + "</div>"; });
+}
+function renderEduDoc(file, title) {
+  setTab("edu");
+  const draw = md => {
+    $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(title)}</span></div>
+      <div class="doc">${md2html(md)}</div>`;
+    window.scrollTo(0, 0);
+  };
+  if (EDUDOCS[file]) { draw(EDUDOCS[file]); return; }
+  $main.innerHTML = '<div class="loading">문서 불러오는 중…</div>';
+  fetch("./edu/" + file).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+    .then(t => { EDUDOCS[file] = t; draw(t); })
+    .catch(e => { $main.innerHTML = '<div class="empty">문서를 불러오지 못했습니다.<br>' + e + "</div>"; });
+}
+// 최소한의 마크다운 변환: 제목/목록/체크리스트/인용/굵게/구분선
+function md2html(src) {
+  const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  const lines = src.replace(/\r\n/g, "\n").split("\n");
+  let html = "", list = null, para = [];
+  const flushPara = () => { if (para.length) { html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
+  const flushList = () => { if (list) { html += "</" + list + ">"; list = null; } };
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    let m;
+    if (!line.trim()) { flushPara(); flushList(); continue; }
+    if ((m = line.match(/^(#{1,3})\s+(.*)/))) {
+      flushPara(); flushList();
+      const tag = ["h2", "h3", "h4"][m[1].length - 1];
+      html += `<${tag}>${inline(m[2])}</${tag}>`;
+    } else if (/^---+$/.test(line.trim())) {
+      flushPara(); flushList(); html += "<hr>";
+    } else if ((m = line.match(/^>\s?(.*)/))) {
+      flushPara(); flushList(); html += "<blockquote>" + inline(m[1]) + "</blockquote>";
+    } else if ((m = line.match(/^[-*]\s+\[( |x|X)\]\s+(.*)/))) {
+      flushPara(); if (list !== "ul") { flushList(); html += "<ul>"; list = "ul"; }
+      const box = m[1].trim() ? "☑" : "☐";
+      html += `<li class="chk">${box} ${inline(m[2])}</li>`;
+    } else if ((m = line.match(/^[-*]\s+(.*)/))) {
+      flushPara(); if (list !== "ul") { flushList(); html += "<ul>"; list = "ul"; }
+      html += "<li>" + inline(m[1]) + "</li>";
+    } else if ((m = line.match(/^\d+\.\s+(.*)/))) {
+      flushPara(); if (list !== "ol") { flushList(); html += "<ol>"; list = "ol"; }
+      html += "<li>" + inline(m[1]) + "</li>";
+    } else {
+      flushList(); para.push(line);
+    }
+  }
+  flushPara(); flushList();
+  return html;
+}
+
+/* ---------- 검색 ---------- */
+let searchTimer = null;
+$q.addEventListener("input", () => {
+  $clearq.style.display = $q.value ? "block" : "none";
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    if ($q.value.trim()) renderSearch($q.value);
+    else renderHome();
+  }, 120);
+});
+$clearq.addEventListener("click", () => { $q.value = ""; $clearq.style.display = "none"; renderHome(); $q.focus(); });
+
+function doSearch(qRaw) {
+  // 공백으로 나눈 단어들을 모두 포함(AND)하는 제품을 찾는다.
+  // 단어별로: 숫자 → 바코드, 초성만 → 초성 매칭, 그 외 → 제품명(공백 무시) 매칭
+  const tokens = qRaw.trim().split(/\s+/).map(norm).filter(Boolean);
+  if (!tokens.length) return [];
+  const results = [];
+  for (const p of PRODUCTS) {
+    let score = 0, ok = true;
+    for (const t of tokens) {
+      let idx;
+      if (/^\d{4,}$/.test(t)) idx = p._b.indexOf(t);
+      else if (isChosungQuery(t)) idx = p._c.indexOf(t);
+      else idx = p._n.indexOf(t);
+      if (idx < 0) { ok = false; break; }
+      score += idx;
+    }
+    if (ok) results.push([score, p]);
+  }
+  results.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length);
+  return results.map(r => r[1]);
+}
+
+/* ---------- 화면 렌더 ---------- */
+function renderHome() {
+  if (!DB) return;
+  const tops = Object.keys(CATTREE);
+  let html = '<div class="sec-title">카테고리로 찾기</div><div class="cat-top">';
+  for (const top of tops) {
+    let n = 0;
+    for (const mid in CATTREE[top]) for (const leaf in CATTREE[top][mid]) n += CATTREE[top][mid][leaf];
+    html += `<button onclick='nav({view:"cat",top:${JSON.stringify(top)}})'>${esc(top)}<span>${n.toLocaleString()}개</span></button>`;
+  }
+  html += "</div>";
+  html += '<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.</footer>';
+  $main.innerHTML = html;
+}
+
+function renderCat(top) {
+  const mids = CATTREE[top] || {};
+  let html = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">${esc(top)}</span></div>`;
+  for (const mid in mids) {
+    html += `<div class="leaf-group"><h3>${esc(mid)}</h3><div class="leaf-list">`;
+    for (const leaf in mids[mid]) {
+      const label = leaf.split(" > ").pop();
+      html += `<button onclick='nav({view:"leaf",leaf:${JSON.stringify(leaf)}})'>${esc(label)} <b>${mids[mid][leaf]}</b></button>`;
+    }
+    html += "</div></div>";
+  }
+  $main.innerHTML = html;
+  window.scrollTo(0, 0);
+}
+
+let gridLimit = 60, lastLeaf = null;
+function renderLeaf(leaf) {
+  if (leaf !== lastLeaf) { gridLimit = 60; lastLeaf = leaf; }  // 다른 카테고리로 오면 초기화
+  const items = PRODUCTS.filter(p => p.cats.includes(leaf));
+  const label = leaf.split(" > ").join(" › ");
+  let html = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">${esc(label)}</span></div>`;
+  html += `<div class="rescount">${items.length}개</div>`;
+  html += grid(items, gridLimit, `renderLeafMore(${JSON.stringify(leaf)})`);
+  $main.innerHTML = html;
+  window.scrollTo(0, 0);
+}
+window.renderLeafMore = leaf => { gridLimit += 60; renderLeaf(leaf); };
+
+let searchLimit = 60, lastQuery = null;
+function renderSearch(qRaw) {
+  if (qRaw !== lastQuery) { searchLimit = 60; lastQuery = qRaw; }
+  const items = doSearch(qRaw);
+  let html = `<div class="rescount">"${esc(qRaw.trim())}" 검색결과 ${items.length}개</div>`;
+  if (!items.length) {
+    html += '<div class="empty">검색 결과가 없습니다.<br>단어를 줄여서 검색해 보세요. (예: "의류케이스" → "케이스")<br>온라인몰에 없는 매장 전용 상품일 수도 있습니다.</div>';
+  } else {
+    html += grid(items, searchLimit, "renderSearchMore()");
+  }
+  $main.innerHTML = html;
+}
+window.renderSearchMore = () => { searchLimit += 60; renderSearch(lastQuery); };
+
+function grid(items, limit, moreCall) {
+  let html = '<div class="grid">';
+  for (const p of items.slice(0, limit)) {
+    const img = p._img
+      ? `<img src="${esc(p._img)}" loading="lazy" alt="">`
+      : '<span class="noimg">이미지 없음</span>';
+    const badge = p.state === "SOLDOUT" ? '<span class="soldout-badge">품절</span>' : "";
+    html += `<div class="pcard" onclick='nav({view:"product",id:${p.id}})'>
+      <div class="ph">${img}</div>
+      <div class="nm">${badge}${esc(p.name)}</div>
+      <div class="pr">${p.price ? p.price.toLocaleString() + "원" : ""}</div>
+    </div>`;
+  }
+  html += "</div>";
+  if (moreCall && items.length > limit) html += `<button class="more" onclick='${moreCall}'>더 보기 (${items.length - limit}개 남음)</button>`;
+  return html;
+}
+
+/* ---------- 상세 ---------- */
+function openDetail(id) {
+  const p = PRODUCTS.find(x => x.id === id);
+  if (!p) { renderHome(); return; }
+  let imgs = [];
+  for (const c of p.colors) if (c.imgs && c.imgs[0]) imgs.push(c.imgs[0]);
+  if (!imgs.length && p._img) imgs = [p._img];
+  let html = `<div class="d-head"><button onclick="history.back()">← 뒤로</button><span>제품 상세</span></div><div class="d-body">`;
+  if (imgs.length) {
+    html += '<div class="d-imgs">' + imgs.slice(0, 6).map(u => `<img src="${esc(u)}" loading="lazy" alt="">`).join("") + "</div>";
+  }
+  html += `<div class="namebox">
+    <div class="lbl">정확한 제품명 (인트라넷 검색용)</div>
+    <div class="nm" id="pname">${esc(p.name)}</div>
+    <div class="pr">${p.price ? "판매가 " + p.price.toLocaleString() + "원" : ""}${p.state === "SOLDOUT" ? " · 온라인몰 품절" : ""}</div>
+    <button class="copybtn" onclick="copyText(document.getElementById('pname').textContent, '제품명 복사됨')">제품명 복사</button>
+  </div>
+  <div class="warn">⚠ 인트라넷 제품명 검색은 띄어쓰기가 정확해야 합니다. 위 이름을 그대로 복사해서 쓰세요.</div>`;
+
+  for (const c of p.colors) {
+    const chip = c.img ? `<img src="${esc(c.img)}" alt="">` : "";
+    const title = c.color && c.color !== "단품" ? esc(c.color) : "기본";
+    html += `<div class="colorblock"><div class="ctitle">${chip}${title}</div>`;
+    if (!c.sizes.length) html += '<div class="warn" style="margin:0">바코드 정보 없음</div>';
+    for (const s of c.sizes) {
+      const szLabel = s.size ? esc(s.size) : "단일";
+      const st = s.state === "SOLDOUT" ? '<div class="st">품절</div>' : "";
+      html += `<div class="bcrow">
+        <div class="sz">${szLabel}${st}</div>
+        <div class="bc">${esc(s.barcode)}</div>
+        <button onclick="copyText('${esc(s.barcode)}', '바코드 복사됨')">복사</button>
+      </div>`;
+    }
+    html += "</div>";
+  }
+  html += `<div class="d-cats">분류: ${p.cats.map(esc).join("<br>")}</div></div>`;
+  $detail.innerHTML = html;
+  $detail.classList.add("open");
+  $detail.scrollTop = 0;
+}
+function closeDetail() { $detail.classList.remove("open"); }
+
+/* ---------- 복사 & 토스트 ---------- */
+function copyText(text, msg) {
+  const done = () => toast(msg);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); done(); } catch (e) { toast("복사 실패 - 길게 눌러 복사하세요"); }
+  document.body.removeChild(ta);
+}
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1400);
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+</script>
+</body>
+</html>
