@@ -606,52 +606,56 @@ function imgUrl(url, w) {
 }
 
 /* ---------- 바코드 카메라 스캔 ---------- */
-// 브라우저 내장 BarcodeDetector 사용(라이브러리 없음). 미지원(iOS 등)이면 버튼 숨김.
-let scanStream = null, scanDetector = null, scanRAF = null, scanBusy = false;
-if (!("BarcodeDetector" in window)) {
-  const b = document.getElementById("scanbtn");
-  if (b) b.style.display = "none";
+// @zxing/library(vendor/zxing.min.js) 사용 — iOS 사파리 포함 모든 브라우저에서 동작.
+// 라이브러리(약 360KB)는 스캔 버튼을 처음 누를 때만 로드해 초기 로딩엔 부담이 없다.
+let scanControls = null, scanReader = null, zxingLoading = null, scanHandled = false;
+function loadZxing() {
+  if (window.ZXing) return Promise.resolve();
+  if (zxingLoading) return zxingLoading;
+  zxingLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "./vendor/zxing.min.js";
+    s.onload = resolve;
+    s.onerror = () => { zxingLoading = null; reject(new Error("스캐너 로드 실패")); };
+    document.head.appendChild(s);
+  });
+  return zxingLoading;
 }
 async function openScanner() {
-  if (!("BarcodeDetector" in window)) { toast("이 브라우저는 카메라 스캔을 지원하지 않아요"); return; }
   // 카메라는 보안 컨텍스트(https 또는 localhost)에서만 열림
   if (!navigator.mediaDevices || !window.isSecureContext) {
     toast("카메라는 https 주소에서만 됩니다"); return;
   }
-  try {
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-  } catch (e) {
-    toast(e && e.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "카메라를 열 수 없습니다");
-    return;
-  }
-  const v = document.getElementById("scanvideo");
-  v.srcObject = scanStream;
-  try { await v.play(); } catch (e) {}
-  try {
-    scanDetector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "code_128"] });
-  } catch (e) {
-    scanDetector = new BarcodeDetector();
-  }
-  document.getElementById("scanmsg").textContent = "바코드를 인식하면 자동으로 제품을 찾습니다";
+  scanHandled = false;
+  document.getElementById("scanmsg").textContent = "스캐너 준비 중…";
   document.getElementById("scanner").classList.add("open");
-  scanBusy = false;
-  scanLoop();
-}
-async function scanLoop() {
-  if (!scanStream) return;
-  const v = document.getElementById("scanvideo");
-  if (!scanBusy && v.readyState >= 2) {
-    scanBusy = true;
-    try {
-      const codes = await scanDetector.detect(v);
-      if (codes && codes.length) {
-        const code = (codes[0].rawValue || "").trim();
-        if (/^\d{8,14}$/.test(code)) { onScanned(code); return; }
-      }
-    } catch (e) {}
-    scanBusy = false;
+  try {
+    await loadZxing();
+  } catch (e) {
+    closeScanner(); toast("스캐너를 불러오지 못했습니다"); return;
   }
-  scanRAF = requestAnimationFrame(scanLoop);
+  // 무인양품 바코드는 EAN-13(JAN). 포맷을 좁혀 인식 속도를 높인다.
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.CODE_128,
+  ]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  scanReader = new ZXing.BrowserMultiFormatReader(hints);
+  const video = document.getElementById("scanvideo");
+  const constraints = { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } };
+  document.getElementById("scanmsg").textContent = "바코드를 인식하면 자동으로 제품을 찾습니다";
+  try {
+    scanControls = await scanReader.decodeFromConstraints(constraints, video, (result) => {
+      if (result && !scanHandled) {
+        const code = (result.getText() || "").trim();
+        if (/^\d{8,14}$/.test(code)) { scanHandled = true; onScanned(code); }
+      }
+    });
+  } catch (e) {
+    closeScanner();
+    toast(e && e.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "카메라를 열 수 없습니다");
+  }
 }
 function onScanned(code) {
   if (navigator.vibrate) navigator.vibrate(120);
@@ -669,10 +673,10 @@ function onScanned(code) {
   }
 }
 function closeScanner() {
-  if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF = null; }
-  if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  if (scanControls) { try { scanControls.stop(); } catch (e) {} scanControls = null; }
+  if (scanReader) { try { scanReader.reset(); } catch (e) {} scanReader = null; }
   const v = document.getElementById("scanvideo");
-  if (v) v.srcObject = null;
+  if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
   document.getElementById("scanner").classList.remove("open");
 }
 // 앱이 백그라운드로 가거나 페이지를 떠날 때 카메라 정리
