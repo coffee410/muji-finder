@@ -140,6 +140,13 @@
   }
   .d-cats { font-size: 12px; color: var(--sub); margin-top: 14px; line-height: 1.6; }
 
+  /* 제품 상세정보 (소재·규격·원산지) */
+  .specbox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 2px 14px; margin-bottom: 10px; }
+  .spec-row { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+  .spec-row:first-child { border-top: 0; }
+  .spec-k { flex-shrink: 0; width: 52px; color: var(--sub); font-weight: 600; }
+  .spec-v { flex: 1; line-height: 1.55; word-break: keep-all; user-select: all; }
+
   #toast {
     position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(20px);
     background: var(--ink); color: #fff; font-size: 14px; padding: 11px 20px;
@@ -174,6 +181,33 @@
   .doc li.chk { list-style: none; margin-left: -20px; }
   .doc blockquote { border-left: 3px solid var(--line); padding: 2px 12px; color: var(--sub); font-size: 13px; margin: 10px 0; }
   .doc hr { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
+
+  /* 교육자료 편집 */
+  .edu-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .edu-add { border: 1px solid var(--red); background: var(--red); color: #fff; border-radius: 10px;
+    padding: 8px 14px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+  .crumb .edu-edit { margin-left: auto; border: 1px solid var(--line); background: var(--card); color: var(--red);
+    border-radius: 10px; padding: 8px 14px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+  .eduform { display: flex; flex-direction: column; gap: 4px; }
+  .eduform label { font-size: 12.5px; color: var(--sub); font-weight: 600; margin: 10px 2px 2px; }
+  .eduform input, .eduform textarea {
+    width: 100%; font-size: 15px; padding: 11px 12px; border: 1.5px solid var(--line);
+    border-radius: 10px; background: var(--card); color: var(--ink); outline: none;
+    font-family: inherit; -webkit-appearance: none;
+  }
+  .eduform textarea { line-height: 1.6; resize: vertical; }
+  .eduform input:focus, .eduform textarea:focus { border-color: var(--red); }
+  .eduform-btns { display: flex; gap: 8px; margin-top: 14px; }
+  .edu-save { flex: 1; border: 0; background: var(--red); color: #fff; border-radius: 10px;
+    padding: 13px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  .edu-draft-btn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
+    padding: 13px 18px; font-size: 14px; cursor: pointer; }
+  .edu-del { border: 1px solid var(--line); background: var(--card); color: #b0473a; border-radius: 10px;
+    padding: 13px 18px; font-size: 14px; cursor: pointer; }
+  .edu-draft { background: #fbf3e6; border: 1px solid #e8d8b8; border-radius: 10px; padding: 10px 12px;
+    font-size: 12.5px; color: #7a5a1e; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .edu-draft button { border: 1px solid #d8c090; background: #fff; color: #7a5a1e; border-radius: 8px;
+    padding: 5px 10px; font-size: 12px; cursor: pointer; }
 
   /* 검색줄 + 스캔 버튼 */
   .searchrow { display: flex; gap: 8px; align-items: stretch; }
@@ -254,6 +288,42 @@
 
 <script>
 "use strict";
+
+/* ---------- Firebase (교육자료 실시간 공유) ---------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyCyCF1S8V3KKnUGw3NQnoiLviCYy0iJEss",
+  authDomain: "muji-finder.firebaseapp.com",
+  projectId: "muji-finder",
+  storageBucket: "muji-finder.firebasestorage.app",
+  messagingSenderId: "1042340686353",
+  appId: "1:1042340686353:web:89bbdb3765a5adc40a5fb0",
+};
+let fb = null;   // { db, fs } — Firestore, 지연 초기화
+let EDU = null;  // 교육자료 문서 캐시
+async function initFirebase() {
+  if (fb) return fb;
+  const [appMod, fs] = await Promise.all([
+    import("https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js"),
+    import("https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js"),
+  ]);
+  const app = appMod.initializeApp(firebaseConfig);
+  fb = { db: fs.getFirestore(app), fs };
+  return fb;
+}
+async function loadEdu() {
+  const { db, fs } = await initFirebase();
+  const snap = await fs.getDocs(fs.query(fs.collection(db, "edu"), fs.orderBy("order")));
+  EDU = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return EDU;
+}
+// 편집 비밀번호: 코드엔 SHA-256 해시만 저장(비밀번호 원문은 없음)
+const EDU_PW_HASH = "02f3c8e9896c0ab95e98c3fce2a3e058a23b3904b6f1ec8460f1d329835aca11";
+async function sha256hex(s) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+function eduAuthed() { return sessionStorage.getItem("eduPwOk") === "1"; }
+
 let DB = null;          // 전체 데이터
 let PRODUCTS = [];      // 검색 인덱스 포함 제품 배열
 let CATTREE = {};       // top -> mid -> [{leafPath, count}]
@@ -332,7 +402,8 @@ function route() {
   const s = history.state || {};
   closeDetail();
   if (s.view === "edu") { renderEduList(); return; }
-  if (s.view === "edudoc") { renderEduDoc(s.file, s.title); return; }
+  if (s.view === "edudoc") { renderEduDoc(s.id); return; }
+  if (s.view === "eduedit") { renderEduEdit(s.id); return; }
   setTab("find");
   if (s.view === "product") { openDetail(s.id); return; }
   if (s.view === "cat") { renderCat(s.top); return; }
@@ -352,39 +423,143 @@ function goTab(which) {
   else { history.pushState({}, "", "#"); route(); }
 }
 
-/* ---------- 교육자료 ---------- */
-let EDUIDX = null;
-const EDUDOCS = {};
+/* ---------- 교육자료 (Firebase 실시간 공유) ---------- */
 function renderEduList() {
   setTab("edu");
-  const draw = () => {
-    let html = '<div class="sec-title">신입 교육자료</div>';
-    for (const d of EDUIDX.docs) {
-      html += `<button class="edu-card" onclick='nav({view:"edudoc",file:${JSON.stringify(d.file)},title:${JSON.stringify(d.title)}})'>
+  $main.innerHTML = '<div class="loading">교육자료 불러오는 중…</div>';
+  loadEdu().then(docs => {
+    let html = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
+      '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>';
+    if (!docs.length) {
+      html += '<div class="empty">아직 등록된 자료가 없습니다.<br>오른쪽 위 “+ 새 자료”로 추가해 주세요.</div>';
+    }
+    for (const d of docs) {
+      html += `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
         <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
     }
-    html += '<footer>자료 추가·수정: web/edu 폴더의 md 파일을 편집하세요.</footer>';
+    html += '<footer>누구나 볼 수 있고, 편집은 매장 공용 비밀번호로 가능합니다.</footer>';
     $main.innerHTML = html;
     window.scrollTo(0, 0);
-  };
-  if (EDUIDX) { draw(); return; }
-  $main.innerHTML = '<div class="loading">교육자료 목록 불러오는 중…</div>';
-  fetch("./edu/index.json").then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(j => { EDUIDX = j; draw(); })
-    .catch(e => { $main.innerHTML = '<div class="empty">교육자료 목록을 불러오지 못했습니다.<br>' + e + "</div>"; });
+  }).catch(e => {
+    $main.innerHTML = '<div class="empty">교육자료를 불러오지 못했습니다.<br>인터넷 연결을 확인해 주세요.<br><span style="font-size:11px">' + esc(String(e)) + '</span></div>';
+  });
 }
-function renderEduDoc(file, title) {
+function renderEduDoc(id) {
   setTab("edu");
-  const draw = md => {
-    $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(title)}</span></div>
-      <div class="doc">${md2html(md)}</div>`;
+  const draw = d => {
+    $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(d.title)}</span>
+      <button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button></div>
+      <div class="doc">${md2html(d.body || "")}</div>`;
     window.scrollTo(0, 0);
   };
-  if (EDUDOCS[file]) { draw(EDUDOCS[file]); return; }
+  const cached = EDU && EDU.find(x => x.id === id);
+  if (cached) { draw(cached); return; }
   $main.innerHTML = '<div class="loading">문서 불러오는 중…</div>';
-  fetch("./edu/" + file).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
-    .then(t => { EDUDOCS[file] = t; draw(t); })
-    .catch(e => { $main.innerHTML = '<div class="empty">문서를 불러오지 못했습니다.<br>' + e + "</div>"; });
+  loadEdu().then(docs => { const d = docs.find(x => x.id === id); d ? draw(d) : renderEduList(); })
+    .catch(() => renderEduList());
+}
+// 임시저장(이 기기에만 localStorage 보관) — 정식 저장 전 작성 내용 보호
+function eduDraftKey(id) { return "eduDraft:" + (id || "new"); }
+function currentEduForm() {
+  return {
+    title: document.getElementById("eduTitle").value,
+    desc: document.getElementById("eduDesc").value,
+    body: document.getElementById("eduBody").value,
+    order: document.getElementById("eduOrder").value,
+  };
+}
+function autoSaveEduDraft(id) {
+  try { localStorage.setItem(eduDraftKey(id), JSON.stringify(currentEduForm())); } catch (e) {}
+}
+function saveEduDraft(id) { autoSaveEduDraft(id); toast("임시저장됨 (이 기기에만 보관)"); }
+function loadEduDraft(id) {
+  try { return JSON.parse(localStorage.getItem(eduDraftKey(id)) || "null"); } catch (e) { return null; }
+}
+function clearEduDraft(id) { localStorage.removeItem(eduDraftKey(id)); renderEduEdit(id); }
+function renderEduEdit(id) {
+  setTab("edu");
+  if (!eduAuthed()) { renderEduPw(id); return; }
+  const server = (EDU && EDU.find(x => x.id === id)) || { title: "", desc: "", body: "", order: 10 };
+  const draft = loadEduDraft(id);
+  const d = draft || server;
+  const isNew = !id;
+  $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button>
+    <span class="path">${isNew ? "새 교육자료" : "자료 편집"}</span></div>
+    <div class="eduform">
+      ${draft ? `<div class="edu-draft">✎ 임시저장한 내용을 불러왔습니다.
+        <button onclick="clearEduDraft(${JSON.stringify(id)})">임시저장 버리기</button></div>` : ""}
+      <label>제목</label>
+      <input id="eduTitle" type="text" value="${esc(d.title)}" placeholder="예: 계산·POS 기본">
+      <label>한 줄 설명</label>
+      <input id="eduDesc" type="text" value="${esc(d.desc || "")}" placeholder="목록에 표시될 짧은 설명">
+      <label>내용 (마크다운: # 제목, - 목록, - [ ] 체크리스트, > 인용, **굵게**)</label>
+      <textarea id="eduBody" rows="16" placeholder="# 제목&#10;&#10;내용을 입력하세요.">${esc(d.body || "")}</textarea>
+      <label>정렬 순서 (작을수록 위, 숫자)</label>
+      <input id="eduOrder" type="number" value="${Number(d.order) || 10}">
+      <div class="eduform-btns">
+        <button class="edu-save" onclick="saveEdu(${JSON.stringify(id)})">저장</button>
+        <button class="edu-draft-btn" onclick="saveEduDraft(${JSON.stringify(id)})">임시저장</button>
+        ${isNew ? "" : `<button class="edu-del" onclick="deleteEdu(${JSON.stringify(id)})">삭제</button>`}
+      </div>
+      <div class="warn" style="margin:10px 2px">‘저장’은 모두에게 공유됩니다. ‘임시저장’은 이 기기에만 보관되어 나중에 이어서 쓸 수 있습니다.</div>
+    </div>`;
+  ["eduTitle", "eduDesc", "eduBody", "eduOrder"].forEach(fid => {
+    const el = document.getElementById(fid);
+    if (el) el.addEventListener("input", () => autoSaveEduDraft(id));
+  });
+  window.scrollTo(0, 0);
+}
+function renderEduPw(id) {
+  setTab("edu");
+  $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button><span class="path">편집 비밀번호</span></div>
+    <div class="eduform">
+      <label>매장 공용 편집 비밀번호를 입력하세요</label>
+      <input id="eduPw" type="password" placeholder="비밀번호" onkeydown="if(event.key==='Enter')submitEduPw(${JSON.stringify(id)})">
+      <div class="eduform-btns"><button class="edu-save" onclick="submitEduPw(${JSON.stringify(id)})">확인</button></div>
+      <div class="warn" style="margin:8px 2px">읽기는 비밀번호 없이 누구나 가능합니다. 편집·추가·삭제만 비밀번호가 필요합니다.</div>
+    </div>`;
+  setTimeout(() => { const el = document.getElementById("eduPw"); if (el) el.focus(); }, 50);
+}
+async function submitEduPw(id) {
+  const pw = (document.getElementById("eduPw") || {}).value || "";
+  if (await sha256hex(pw) === EDU_PW_HASH) {
+    sessionStorage.setItem("eduPwOk", "1");
+    renderEduEdit(id);
+  } else {
+    toast("비밀번호가 맞지 않습니다");
+  }
+}
+async function saveEdu(id) {
+  const title = document.getElementById("eduTitle").value.trim();
+  const desc = document.getElementById("eduDesc").value.trim();
+  const body = document.getElementById("eduBody").value;
+  const order = Number(document.getElementById("eduOrder").value) || 10;
+  if (!title) { toast("제목을 입력하세요"); return; }
+  if (!body.trim()) { toast("내용을 입력하세요"); return; }
+  try {
+    const { db, fs } = await initFirebase();
+    const data = { title, desc, body, order, updatedAt: fs.serverTimestamp() };
+    if (id) await fs.setDoc(fs.doc(db, "edu", id), data, { merge: true });
+    else await fs.addDoc(fs.collection(db, "edu"), data);
+    localStorage.removeItem(eduDraftKey(id));  // 정식 저장됐으니 임시저장 정리
+    EDU = null;
+    toast("저장되었습니다");
+    history.back();
+  } catch (e) {
+    toast("저장 실패: " + (e && e.code || "오류"));
+  }
+}
+async function deleteEdu(id) {
+  if (!confirm("이 교육자료를 삭제할까요? 되돌릴 수 없습니다.")) return;
+  try {
+    const { db, fs } = await initFirebase();
+    await fs.deleteDoc(fs.doc(db, "edu", id));
+    EDU = null;
+    toast("삭제되었습니다");
+    history.pushState({ view: "edu" }, "", "#"); route();
+  } catch (e) {
+    toast("삭제 실패: " + (e && e.code || "오류"));
+  }
 }
 // 최소한의 마크다운 변환: 제목/목록/체크리스트/인용/굵게/구분선
 function md2html(src) {
@@ -550,6 +725,14 @@ function openDetail(id) {
     <button class="copybtn" onclick="copyText(document.getElementById('pname').textContent, '제품명 복사됨')">제품명 복사</button>
   </div>
   <div class="warn">⚠ 인트라넷 제품명 검색은 띄어쓰기가 정확해야 합니다. 위 이름을 그대로 복사해서 쓰세요.</div>`;
+
+  if (p.spec && Object.keys(p.spec).length) {
+    html += '<div class="specbox">';
+    for (const k in p.spec) {
+      html += `<div class="spec-row"><span class="spec-k">${esc(k)}</span><span class="spec-v">${esc(p.spec[k])}</span></div>`;
+    }
+    html += "</div>";
+  }
 
   for (const c of p.colors) {
     const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
