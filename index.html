@@ -358,7 +358,15 @@ async function ensureEduKey() {
   eduKey = await deriveKey(pw);
   return eduKey;
 }
-function b64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function b64(buf) {
+  // 큰 데이터(이미지 포함 문서)에서 스택 초과 방지 위해 청크 단위로 변환
+  const bytes = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
 function ub64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer; }
 async function encryptObj(key, obj) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
