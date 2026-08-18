@@ -514,14 +514,15 @@ function renderEduPw(id) {
   $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button><span class="path">편집 비밀번호</span></div>
     <div class="eduform">
       <label>매장 공용 편집 비밀번호를 입력하세요</label>
-      <input id="eduPw" type="password" placeholder="비밀번호" onkeydown="if(event.key==='Enter')submitEduPw(${JSON.stringify(id)})">
+      <input id="eduPw" type="password" placeholder="비밀번호" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitEduPw(${JSON.stringify(id)})">
       <div class="eduform-btns"><button class="edu-save" onclick="submitEduPw(${JSON.stringify(id)})">확인</button></div>
       <div class="warn" style="margin:8px 2px">읽기는 비밀번호 없이 누구나 가능합니다. 편집·추가·삭제만 비밀번호가 필요합니다.</div>
     </div>`;
   setTimeout(() => { const el = document.getElementById("eduPw"); if (el) el.focus(); }, 50);
 }
 async function submitEduPw(id) {
-  const pw = (document.getElementById("eduPw") || {}).value || "";
+  // 대소문자·앞뒤 공백 무시(모바일 키보드 자동 대문자화 대응)
+  const pw = ((document.getElementById("eduPw") || {}).value || "").trim().toLowerCase();
   if (await sha256hex(pw) === EDU_PW_HASH) {
     sessionStorage.setItem("eduPwOk", "1");
     renderEduEdit(id);
