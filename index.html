@@ -748,13 +748,14 @@ function md2html(src) {
       html += `<${tag}>${inline(m[2])}</${tag}>`;
     } else if (/^---+$/.test(line.trim())) {
       flushPara(); flushList(); html += "<hr>";
-    } else if ((m = line.match(/^@p\s+(\d{8,14})\s*$/))) {
-      // 제품 행: "@p 바코드" → 썸네일+제품명+코드 카드(누르면 상세). 모바일 폭에 맞춘 세로 나열용
+    } else if ((m = line.match(/^@p\s+(\d{8,14})(?:\s+(.+))?$/))) {
+      // 제품 행: "@p 바코드 [표시이름]" → 썸네일+이름+코드 카드(누르면 상세).
+      // 표시이름을 주면 공통 접두를 뺀 짧은 이름으로 보여줄 수 있다(정식 명칭은 상세에서).
       flushPara(); flushList();
       const bc = m[1];
       const prod = (typeof PRODUCTS !== "undefined") &&
         PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === bc)));
-      const nm = prod ? prod.name : "(앱 데이터에 없는 제품)";
+      const nm = (m[2] || "").trim() || (prod ? prod.name : "(앱 데이터에 없는 제품)");
       const im = prod && prod._img ? `<img src="${esc(imgUrl(prod._img, 100))}" loading="lazy" alt="">` : '<span class="doc-prow-noimg"></span>';
       html += `<div class="doc-prow" onclick="openByBarcode('${bc}')">${im}
         <div class="doc-prow-tx"><div class="doc-prow-nm">${esc(nm)}</div><div class="doc-code">${bc}</div></div></div>`;
