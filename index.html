@@ -184,6 +184,12 @@
   .doc hr { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
   .doc-img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line);
     border-radius: 8px; margin: 12px 0; }
+  .doc-img-sm { display: block; max-width: 220px; width: 100%; height: auto; border: 1px solid var(--line);
+    border-radius: 8px; margin: 8px 0; }
+  .doc-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
+  .doc-table th, .doc-table td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+  .doc-table th { background: var(--bg); font-weight: 700; }
+  .doc-table td { line-height: 1.5; }
 
   /* 교육자료 검색 */
   .edu-search { width: 100%; font-size: 15px; padding: 10px 12px; border: 1.5px solid var(--line);
@@ -669,13 +675,27 @@ async function deleteEdu(id) {
 function md2html(src) {
   const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
   const lines = src.replace(/\r\n/g, "\n").split("\n");
-  let html = "", list = null, para = [];
+  let html = "", list = null, para = [], table = [];
   const flushPara = () => { if (para.length) { html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
   const flushList = () => { if (list) { html += "</" + list + ">"; list = null; } };
+  const flushTable = () => {
+    if (!table.length) return;
+    const rows = table.filter(r => !/^\|?[\s|:\-]+\|?$/.test(r));  // 구분선(|---|) 제외
+    let h = '<table class="doc-table">';
+    rows.forEach((row, i) => {
+      const cells = row.replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const tag = i === 0 ? "th" : "td";
+      h += "<tr>" + cells.map(c => `<${tag}>${inline(c)}</${tag}>`).join("") + "</tr>";
+    });
+    html += h + "</table>"; table = [];
+  };
+  const flushAll = () => { flushPara(); flushList(); flushTable(); };
   for (const raw of lines) {
     const line = raw.trimEnd();
     let m;
-    if (!line.trim()) { flushPara(); flushList(); continue; }
+    if (!line.trim()) { flushAll(); continue; }
+    if (line.trim().startsWith("|")) { flushPara(); flushList(); table.push(line.trim()); continue; }
+    if (table.length) flushTable();
     if ((m = line.match(/^(#{1,3})\s+(.*)/))) {
       flushPara(); flushList();
       const tag = ["h2", "h3", "h4"][m[1].length - 1];
@@ -683,9 +703,10 @@ function md2html(src) {
     } else if (/^---+$/.test(line.trim())) {
       flushPara(); flushList(); html += "<hr>";
     } else if ((m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/))) {
-      // 이미지 한 줄: ![설명](data:image/... 또는 URL)
+      // 이미지 한 줄: ![설명](url). alt가 "sm:"로 시작하면 작은 참고 이미지
       flushPara(); flushList();
-      html += `<img class="doc-img" src="${esc(m[2])}" alt="${esc(m[1])}" loading="lazy">`;
+      const sm = m[1].startsWith("sm:");
+      html += `<img class="${sm ? "doc-img-sm" : "doc-img"}" src="${esc(m[2])}" alt="${esc(m[1].replace(/^sm:/, ""))}" loading="lazy">`;
     } else if ((m = line.match(/^>\s?(.*)/))) {
       flushPara(); flushList(); html += "<blockquote>" + inline(m[1]) + "</blockquote>";
     } else if ((m = line.match(/^[-*]\s+\[( |x|X)\]\s+(.*)/))) {
@@ -702,7 +723,7 @@ function md2html(src) {
       flushList(); para.push(line);
     }
   }
-  flushPara(); flushList();
+  flushAll();
   return html;
 }
 
