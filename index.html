@@ -311,19 +311,57 @@ async function initFirebase() {
   fb = { db: fs.getFirestore(app), fs };
   return fb;
 }
-async function loadEdu() {
+async function loadEdu(key) {
   const { db, fs } = await initFirebase();
   const snap = await fs.getDocs(fs.query(fs.collection(db, "edu"), fs.orderBy("order")));
-  EDU = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const out = [];
+  for (const d of snap.docs) {
+    const data = d.data();
+    try {
+      const dec = await decryptObj(key, data);  // { title, desc, body }
+      out.push({ id: d.id, order: data.order, ...dec });
+    } catch (e) {
+      out.push({ id: d.id, order: data.order, title: "🔒 열 수 없음", desc: "현재 비밀번호로 복호화 안 됨", body: "", _locked: true });
+    }
+  }
+  EDU = out;
   return EDU;
 }
-// 편집 비밀번호: 코드엔 SHA-256 해시만 저장(비밀번호 원문은 없음)
+// 교육자료 비밀번호: 코드엔 SHA-256 해시만(원문 없음). 검증 겸 암호화 키 유도에 사용.
+// 회사 문서가 들어가므로 내용은 AES-256으로 암호화해 Firestore에 저장한다.
+// 비밀번호를 잃으면 기존 내용은 복구 불가(모두 재작성 필요) — 비밀번호를 안전히 공유·보관할 것.
 const EDU_PW_HASH = "02f3c8e9896c0ab95e98c3fce2a3e058a23b3904b6f1ec8460f1d329835aca11";
+let eduKey = null;  // 유도된 AES-GCM 키(메모리 캐시)
 async function sha256hex(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, "0")).join("");
 }
-function eduAuthed() { return sessionStorage.getItem("eduPwOk") === "1"; }
+function eduAuthed() { return !!sessionStorage.getItem("eduPw"); }
+async function deriveKey(password) {
+  const e = new TextEncoder();
+  const km = await crypto.subtle.importKey("raw", e.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: e.encode("muji-edu-salt-v1"), iterations: 100000, hash: "SHA-256" },
+    km, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+async function ensureEduKey() {
+  if (eduKey) return eduKey;
+  const pw = sessionStorage.getItem("eduPw");
+  if (!pw) return null;
+  eduKey = await deriveKey(pw);
+  return eduKey;
+}
+function b64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function ub64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer; }
+async function encryptObj(key, obj) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+  return { enc: b64(ct), iv: b64(iv) };
+}
+async function decryptObj(key, doc) {
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ub64(doc.iv) }, key, ub64(doc.enc));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
 
 let DB = null;          // 전체 데이터
 let PRODUCTS = [];      // 검색 인덱스 포함 제품 배열
@@ -449,37 +487,43 @@ function goTab(which) {
 /* ---------- 교육자료 (Firebase 실시간 공유) ---------- */
 function renderEduList() {
   setTab("edu");
-  $main.innerHTML = '<div class="loading">교육자료 불러오는 중…</div>';
-  loadEdu().then(docs => {
-    let html = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
-      '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>';
-    if (!docs.length) {
-      html += '<div class="empty">아직 등록된 자료가 없습니다.<br>오른쪽 위 “+ 새 자료”로 추가해 주세요.</div>';
-    }
-    for (const d of docs) {
-      html += `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
-        <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
-    }
-    html += '<footer>누구나 볼 수 있고, 편집은 매장 공용 비밀번호로 가능합니다.</footer>';
-    $main.innerHTML = html;
-    window.scrollTo(0, 0);
-  }).catch(e => {
-    $main.innerHTML = '<div class="empty">교육자료를 불러오지 못했습니다.<br>인터넷 연결을 확인해 주세요.<br><span style="font-size:11px">' + esc(String(e)) + '</span></div>';
+  ensureEduKey().then(key => {
+    if (!key) { renderEduPw("list"); return; }
+    $main.innerHTML = '<div class="loading">교육자료 불러오는 중…</div>';
+    loadEdu(key).then(docs => {
+      let html = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
+        '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>';
+      if (!docs.length) {
+        html += '<div class="empty">아직 등록된 자료가 없습니다.<br>오른쪽 위 “+ 새 자료”로 추가해 주세요.</div>';
+      }
+      for (const d of docs) {
+        html += `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
+          <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
+      }
+      html += '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.</footer>';
+      $main.innerHTML = html;
+      window.scrollTo(0, 0);
+    }).catch(e => {
+      $main.innerHTML = '<div class="empty">교육자료를 불러오지 못했습니다.<br>인터넷 연결을 확인해 주세요.<br><span style="font-size:11px">' + esc(String(e)) + '</span></div>';
+    });
   });
 }
 function renderEduDoc(id) {
   setTab("edu");
-  const draw = d => {
-    $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(d.title)}</span>
-      <button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button></div>
-      <div class="doc">${md2html(d.body || "")}</div>`;
-    window.scrollTo(0, 0);
-  };
-  const cached = EDU && EDU.find(x => x.id === id);
-  if (cached) { draw(cached); return; }
-  $main.innerHTML = '<div class="loading">문서 불러오는 중…</div>';
-  loadEdu().then(docs => { const d = docs.find(x => x.id === id); d ? draw(d) : renderEduList(); })
-    .catch(() => renderEduList());
+  ensureEduKey().then(key => {
+    if (!key) { renderEduPw("list"); return; }
+    const draw = d => {
+      $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(d.title)}</span>
+        <button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button></div>
+        <div class="doc">${md2html(d.body || "")}</div>`;
+      window.scrollTo(0, 0);
+    };
+    const cached = EDU && EDU.find(x => x.id === id);
+    if (cached) { draw(cached); return; }
+    $main.innerHTML = '<div class="loading">문서 불러오는 중…</div>';
+    loadEdu(key).then(docs => { const d = docs.find(x => x.id === id); d ? draw(d) : renderEduList(); })
+      .catch(() => renderEduList());
+  });
 }
 // 임시저장(이 기기에만 localStorage 보관) — 정식 저장 전 작성 내용 보호
 function eduDraftKey(id) { return "eduDraft:" + (id || "new"); }
@@ -538,26 +582,28 @@ function renderEduEdit(id) {
   });
   window.scrollTo(0, 0);
 }
-function renderEduPw(id) {
+function renderEduPw(next) {
   setTab("edu");
-  $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button><span class="path">편집 비밀번호</span></div>
+  $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button><span class="path">교육자료 비밀번호</span></div>
     <div class="eduform">
-      <label>매장 공용 편집 비밀번호를 입력하세요</label>
+      <label>매장 공용 비밀번호를 입력하세요</label>
       <input id="eduPw" type="password" placeholder="비밀번호" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false">
       <div class="eduform-btns"><button class="edu-save" id="eduPwBtn">확인</button></div>
-      <div class="warn" style="margin:8px 2px">읽기는 비밀번호 없이 누구나 가능합니다. 편집·추가·삭제만 비밀번호가 필요합니다.</div>
+      <div class="warn" style="margin:8px 2px">🔒 교육자료는 암호화되어 있어 비밀번호가 있어야 열람·편집할 수 있습니다.</div>
     </div>`;
   const inp = document.getElementById("eduPw");
-  document.getElementById("eduPwBtn").addEventListener("click", () => submitEduPw(id));
-  inp.addEventListener("keydown", e => { if (e.key === "Enter") submitEduPw(id); });
+  document.getElementById("eduPwBtn").addEventListener("click", () => submitEduPw(next));
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") submitEduPw(next); });
   setTimeout(() => inp.focus(), 50);
 }
-async function submitEduPw(id) {
+async function submitEduPw(next) {
   // 대소문자·앞뒤 공백 무시(모바일 키보드 자동 대문자화 대응)
   const pw = ((document.getElementById("eduPw") || {}).value || "").trim().toLowerCase();
   if (await sha256hex(pw) === EDU_PW_HASH) {
-    sessionStorage.setItem("eduPwOk", "1");
-    renderEduEdit(id);
+    sessionStorage.setItem("eduPw", pw);
+    eduKey = await deriveKey(pw);
+    if (next === "list") { history.pushState({ view: "edu" }, "", "#"); route(); }
+    else renderEduEdit(next);  // "" 신규 또는 기존 문서 id
   } else {
     toast("비밀번호가 맞지 않습니다");
   }
@@ -569,10 +615,13 @@ async function saveEdu(id) {
   const order = Number(document.getElementById("eduOrder").value) || 10;
   if (!title) { toast("제목을 입력하세요"); return; }
   if (!body.trim()) { toast("내용을 입력하세요"); return; }
+  const key = await ensureEduKey();
+  if (!key) { toast("비밀번호가 필요합니다"); renderEduPw("list"); return; }
   try {
     const { db, fs } = await initFirebase();
-    const data = { title, desc, body, order, updatedAt: fs.serverTimestamp() };
-    if (id) await fs.setDoc(fs.doc(db, "edu", id), data, { merge: true });
+    const encrypted = await encryptObj(key, { title, desc, body });  // 내용 암호화
+    const data = { ...encrypted, order, updatedAt: fs.serverTimestamp() };
+    if (id) await fs.setDoc(fs.doc(db, "edu", id), data);
     else await fs.addDoc(fs.collection(db, "edu"), data);
     localStorage.removeItem(eduDraftKey(id));  // 정식 저장됐으니 임시저장 정리
     EDU = null;
