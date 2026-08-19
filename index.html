@@ -109,7 +109,29 @@
   .d-head span { font-size: 13px; color: var(--sub); }
   .d-body { padding: 16px; }
   .d-imgs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; }
-  .d-imgs img { height: 150px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
+  .d-imgs img { height: 150px; border-radius: 10px; border: 1px solid var(--line); background: #fff; cursor: zoom-in; }
+  .galg { margin-bottom: 10px; }
+  .galg .gall { font-size: 11.5px; color: var(--sub); margin: 0 2px 5px; }
+  .galg .d-imgs { margin-bottom: 0; }
+  .gal-load { font-size: 11.5px; color: var(--sub); margin: 0 2px 12px; }
+  .galmore { margin-bottom: 6px; }
+  .galmore > summary { font-size: 12.5px; color: var(--sub); cursor: pointer; padding: 6px 2px; }
+  /* 상세 페이지 이미지(연출컷·설명·규격표) 접기 */
+  .dimgs { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
+  .dimgs > summary { padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .dimgs .dbody { padding: 0 10px 10px; }
+  .dimgs .dbody img { width: 100%; border-radius: 8px; display: block; margin-bottom: 8px; background: #fff; }
+  /* 사진 크게 보기 */
+  #viewer { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.93); display: none; }
+  #viewer.open { display: block; }
+  #viewer .vstrip { height: 100%; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; }
+  #viewer .vstrip > div { flex: 0 0 100%; height: 100%; scroll-snap-align: center;
+    display: flex; align-items: center; justify-content: center; padding: 8px; box-sizing: border-box; }
+  #viewer .vstrip img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  #viewer .vclose { position: absolute; top: 12px; right: 12px; z-index: 2; border: 0; border-radius: 999px;
+    width: 42px; height: 42px; font-size: 18px; background: rgba(255,255,255,.92); cursor: pointer; }
+  #viewer .vcnt { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center;
+    color: #fff; font-size: 13px; text-shadow: 0 1px 3px #000; pointer-events: none; }
   .namebox {
     background: var(--card); border: 1.5px solid var(--red); border-radius: 12px;
     padding: 14px; margin-bottom: 8px;
@@ -317,6 +339,7 @@
 <main id="main"><div class="loading">제품 데이터 불러오는 중…</div></main>
 
 <div id="detail"></div>
+<div id="viewer"><div class="vstrip"></div><button class="vclose" onclick="history.back()">✕</button><div class="vcnt"></div></div>
 
 <div id="scanner">
   <div class="scan-head">
@@ -537,6 +560,11 @@ window.addEventListener("popstate", route);
 function nav(state) { history.pushState(state, "", "#"); route(); }
 function route() {
   const s = history.state || {};
+  // 사진 크게 보기가 열려 있으면 뒤로가기는 그것만 닫는다(상세 화면은 그대로 유지)
+  if (VIEWER_OPEN) {
+    closeViewer();
+    if (!s.viewer && s.view === "product" && $detail.classList.contains("open")) return;
+  }
   closeDetail();
   if (s.view === "edu") { renderEduList(); return; }
   if (s.view === "edudoc") { renderEduDoc(s.id); return; }
@@ -956,13 +984,14 @@ function grid(items, limit, moreCall) {
 function openDetail(id) {
   const p = PRODUCTS.find(x => x.id === id);
   if (!p) { renderHome(); return; }
+  // 저장된 대표 이미지(색상당 1장)를 먼저 그리고, 전체 사진은 API로 받아 교체한다
   let imgs = [];
   for (const c of p.colors) if (c.imgs && c.imgs[0]) imgs.push(c.imgs[0]);
   if (!imgs.length && p._img) imgs = [p._img];
   let html = `<div class="d-head"><button onclick="history.back()">← 뒤로</button><span>제품 상세</span></div><div class="d-body">`;
-  if (imgs.length) {
-    html += '<div class="d-imgs">' + imgs.slice(0, 6).map(u => `<img src="${esc(imgUrl(u, 800))}" loading="lazy" decoding="async" alt="">`).join("") + "</div>";
-  }
+  html += '<div id="gal">' + (imgs.length
+    ? '<div class="d-imgs">' + imgs.map(u => `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" alt="">`).join("") + "</div>"
+    : "") + "</div>";
   html += `<div class="namebox">
     <div class="lbl">정확한 제품명 (인트라넷 검색용)</div>
     <div class="nm" id="pname">${esc(p.name)}</div>
@@ -999,8 +1028,121 @@ function openDetail(id) {
   $detail.innerHTML = html;
   $detail.classList.add("open");
   $detail.scrollTop = 0;
+  if (imgs.length) {
+    // 전체 사진이 오기 전(또는 오프라인이라 못 받을 때)에도 대표 사진은 크게 볼 수 있게
+    const box = document.getElementById("gal");
+    box.onclick = ev => {
+      const el = ev.target.closest("img");
+      if (el) openViewer(imgs, [...box.querySelectorAll("img")].indexOf(el));
+    };
+  }
+  loadGallery(p);
 }
 function closeDetail() { $detail.classList.remove("open"); }
+
+/* ---------- 상세 사진 전체(온라인몰 API에서 즉시 조회) ----------
+   products.json에는 용량 때문에 색상당 대표 1장만 저장한다(전부 넣으면 25MB↑).
+   상세를 열 때 products/view 를 호출해 색상별 사진 전체 + 상세페이지 이미지를 받아 교체.
+   실패(오프라인 등)하면 이미 그려둔 대표 사진이 그대로 남는다. */
+const GAL_CACHE = {};
+const MUJI_API = "https://api.mujikorea.co.kr/api";
+function uniqUrls(a) {
+  const seen = new Set();
+  return (a || []).filter(u => typeof u === "string" && u && !/no.?image/i.test(u) && !seen.has(u) && (seen.add(u), true));
+}
+async function fetchGallery(id) {
+  if (GAL_CACHE[id]) return GAL_CACHE[id];
+  const res = await fetch(`${MUJI_API}/products/view/${encodeURIComponent(id)}`, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const prod = (((await res.json()).data || {}).row || {}).product || {};
+  const groups = [];
+  const opts = prod.options;
+  if (opts && typeof opts === "object") {
+    for (const cname in opts) {
+      const c = opts[cname];
+      // 단일옵션(option_type=ONE) 응답에 섞이는 option_name(문자열)·data(null) 키는 건너뛴다
+      if (!c || typeof c !== "object") continue;
+      const list = uniqUrls(c.images);
+      if (list.length) groups.push({ color: (cname || "").trim(), imgs: list });
+    }
+  }
+  if (!groups.length) {
+    const t = uniqUrls(prod.thumbnail_list);
+    if (t.length) groups.push({ color: "", imgs: t });
+  }
+  GAL_CACHE[id] = { groups, detail: uniqUrls(prod.detail_images) };
+  return GAL_CACHE[id];
+}
+async function loadGallery(p) {
+  let g;
+  try { g = await fetchGallery(p.id); } catch (e) { return; }
+  const box = document.getElementById("gal");
+  if (!box || !$detail.classList.contains("open")) return;
+  // 그리는 사이 다른 제품으로 넘어갔으면 무시
+  if ((history.state || {}).id !== p.id) return;
+  const multi = g.groups.length > 1;
+  const total = g.groups.reduce((n, x) => n + x.imgs.length, 0);
+  if (total) {
+    const grpHtml = (grp, gi) =>
+      `<div class="galg">${multi && grp.color ? `<div class="gall">${esc(grp.color)} · ${grp.imgs.length}장</div>` : ""}
+        <div class="d-imgs">${grp.imgs.map((u, i) =>
+          `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" alt="" data-g="${gi}" data-i="${i}">`).join("")}</div>
+      </div>`;
+    // 색상이 많으면 제품명이 한참 아래로 밀리므로 3번째 색상부터는 접어둔다
+    const head = g.groups.slice(0, 2).map(grpHtml).join("");
+    const rest = g.groups.slice(2);
+    box.innerHTML = head + (rest.length
+      ? `<details class="galmore"><summary>다른 색상 사진 (${rest.length}개 색상)</summary>` +
+        rest.map((grp, i) => grpHtml(grp, i + 2)).join("") + "</details>"
+      : "") + `<div class="gal-load">사진 ${total}장 · 탭하면 크게 보입니다</div>`;
+    box.querySelectorAll("details").forEach(eagerOnOpen);
+    box.onclick = ev => {
+      const el = ev.target.closest("img[data-g]");
+      if (!el) return;
+      openViewer(g.groups[+el.dataset.g].imgs, +el.dataset.i);
+    };
+  }
+  // 상세 페이지 이미지(연출컷·설명·규격표)는 접어서 아래에 붙인다
+  const body = $detail.querySelector(".d-body");
+  if (g.detail.length && body && !body.querySelector(".dimgs")) {
+    const d = document.createElement("details");
+    d.className = "dimgs";
+    d.innerHTML = `<summary>상세 페이지 이미지 (${g.detail.length})</summary><div class="dbody">` +
+      g.detail.map(u => `<img src="${esc(imgUrl(u, 800))}" loading="lazy" decoding="async" alt="">`).join("") + "</div>";
+    eagerOnOpen(d);
+    const cats = body.querySelector(".d-cats");
+    body.insertBefore(d, cats || null);
+  }
+}
+// 접힌 <details> 안의 lazy 이미지는 펼쳐도 바로 로드되지 않는 경우가 있어, 펼칠 때 eager로 바꾼다
+function eagerOnOpen(det) {
+  det.addEventListener("toggle", () => {
+    if (det.open) det.querySelectorAll('img[loading="lazy"]').forEach(im => { im.loading = "eager"; });
+  });
+}
+/* 사진 크게 보기 — 좌우로 넘기며 보고, 뒤로가기(또는 ✕)로 닫는다 */
+let VIEWER_OPEN = false;
+function openViewer(list, idx) {
+  const v = document.getElementById("viewer");
+  v.querySelector(".vstrip").innerHTML = list.map(u =>
+    `<div><img src="${esc(imgUrl(u, 1000))}" alt=""></div>`).join("");
+  v.querySelector(".vcnt").textContent = `${idx + 1} / ${list.length}`;
+  v.classList.add("open");
+  VIEWER_OPEN = true;
+  const strip = v.querySelector(".vstrip");
+  strip.scrollLeft = strip.clientWidth * idx;
+  strip.onscroll = () => {
+    const i = Math.round(strip.scrollLeft / strip.clientWidth);
+    v.querySelector(".vcnt").textContent = `${Math.min(i + 1, list.length)} / ${list.length}`;
+  };
+  history.pushState(Object.assign({}, history.state || {}, { viewer: true }), "", "#");
+}
+function closeViewer() {
+  const v = document.getElementById("viewer");
+  v.classList.remove("open");
+  v.querySelector(".vstrip").innerHTML = "";
+  VIEWER_OPEN = false;
+}
 // 교육자료의 [이름](p:바코드) 링크 → 그 바코드를 가진 제품 상세를 연다
 // 이동 전에 보던 문서의 접기·스크롤 상태를 저장해, 뒤로가기로 돌아오면 그대로 복원한다
 const DOC_VIEW = {};
