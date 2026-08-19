@@ -206,9 +206,9 @@
     padding: 7px 12px; font-size: 12.5px; cursor: pointer; color: var(--ink); flex-shrink: 0;
   }
   .spec-row .sbtn.stockbtn { color: var(--red); }
-  .stkrow .stk-wait { font-size: 12px; color: var(--sub); }
-  .stkrow .mystk { display: inline; font-size: 13.5px; color: var(--red); font-weight: 700; }
+  .stkrow .mystk { display: inline; font-size: 13.5px; min-height: 0; color: var(--red); font-weight: 700; }
   .stkrow .mystk.zero { color: var(--sub); font-weight: 400; }
+  .mystk.wait { color: var(--sub); font-weight: 400; }
   /* 사용상 주의사항 (스펙 표 아래 접기) */
   .pnotice { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
   .pnotice summary { padding: 12px 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
@@ -382,7 +382,8 @@
   .ss-load { padding: 34px 16px; text-align: center; color: var(--sub); font-size: 13px; }
   .ss-hint { font-size: 11.5px; color: var(--sub); margin: 2px 18px 8px; }
   .bcrow .stockbtn { color: var(--red); }
-  .bcrow .mystk { font-size: 11px; color: var(--red); font-weight: 700; margin-top: 2px; max-width: 88px; word-break: keep-all; }  /* 매장명이 길면 공백 단위로 줄바꿈 */
+  /* 매장명이 길면 공백 단위 줄바꿈. min-height로 2줄 자리를 미리 확보 — 채워질 때 행이 안 밀린다 */
+  .bcrow .mystk { font-size: 11px; line-height: 1.35; min-height: 30px; color: var(--red); font-weight: 700; margin-top: 2px; max-width: 88px; word-break: keep-all; }
   .bcrow .mystk.zero { color: var(--sub); font-weight: 400; }
 
   /* 바코드 스캐너 오버레이 */
@@ -486,7 +487,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.23";
+const APP_VER = "2026-08-19.24";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1262,7 +1263,7 @@ function specHtml(spec, stk) {
     rows.splice(keys.indexOf("제품 코드") + 1, 0,
       `<div class="spec-row stkrow" data-bc="${esc(stk.bc)}">
         <span class="spec-k">재고</span>
-        <span class="spec-v sz"><span class="stk-wait">확인 중…</span></span>
+        <span class="spec-v sz"><span class="mystk wait">확인 중…</span></span>
         <button class="sbtn stockbtn" data-bc="${esc(stk.bc)}" data-lb="${esc(stk.lb)}">재고</button>
       </div>`);
   }
@@ -1305,7 +1306,7 @@ function bcRowsHtml(p, c) {
     const st = s.state === "SOLDOUT" ? '<div class="st">품절</div>' : "";
     const stockLb = esc((c.color && c.color !== "단품" ? c.color + " · " : "") + (rawSz || "단일"));
     h += `<div class="bcrow" data-bc="${esc(s.barcode)}">
-      <div class="sz">${szLabel}${st}</div>
+      <div class="sz">${szLabel}${st}${p.storeOnly ? "" : '<div class="mystk wait">…</div>'}</div>
       <div class="bc">${esc(s.barcode)}</div>
       ${p.storeOnly ? "" : `<button class="stockbtn" data-bc="${esc(s.barcode)}" data-lb="${stockLb}">재고</button>`}
       <button onclick="copyText('${esc(s.barcode)}', '바코드 복사됨')">복사</button>
@@ -1390,49 +1391,53 @@ function openDetail(id) {
   loadMyStock(p);
 }
 // 상세 화면의 각 바코드 행에 자점(내 매장) 재고를 자동 표시.
-// 옵션마다 stores API 1회 — 서버 배려로 250ms 간격 순차 호출, 세션 캐시 재사용.
-let stockRun = 0;  // 색상 전환 등으로 새 호출이 시작되면 이전 루프는 중단
+// 옵션마다 stores API 1회 — 100ms 간격 스태거 병렬(서버 배려), 세션 캐시(진행 중 프라미스) 재사용.
+function fetchStores(oid) {
+  if (!STOCK_CACHE[oid]) {
+    STOCK_CACHE[oid] = (async () => {
+      const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(oid)}&page=1`,
+        { headers: { Accept: "application/json" } });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return (((await res.json()).data || {}).rows || []);
+    })().catch(e => { delete STOCK_CACHE[oid]; throw e; });
+  }
+  return STOCK_CACHE[oid];
+}
+let stockRun = 0;  // 색상 전환 등으로 새 호출이 시작되면 이전 작업의 결과 반영은 중단
 async function loadMyStock(p) {
   if (p.storeOnly) return;
   const run = ++stockRun;
   const store = myStore();
-  try {
-    let g;
-    try { g = await fetchGallery(p.id); } catch (e) { return; }
-    if (!g || !g.optMap) return;
-    let fetched = false;
-    // .bcrow(색상·사이즈 블록)와 .stkrow(스펙 표의 재고 행) 둘 다 채운다
-    for (const rowEl of [...$detail.querySelectorAll(".bcrow[data-bc], .stkrow[data-bc]")]) {
-      if (run !== stockRun) return;
-      // 다른 제품으로 이동했거나 상세를 닫았으면 중단(닫으면 history 상태가 먼저 바뀐다)
-      if ((history.state || {}).id !== p.id) return;
+  let g = null;
+  try { g = await fetchGallery(p.id); } catch (e) {}
+  // .bcrow(색상·사이즈 블록)와 .stkrow(스펙 표의 재고 행) 둘 다 채운다
+  const rows = [...$detail.querySelectorAll(".bcrow[data-bc], .stkrow[data-bc]")];
+  if (g && g.optMap) {
+    await Promise.all(rows.map(async (rowEl, i) => {
       const m = g.optMap[rowEl.dataset.bc];
-      if (!m) continue;
+      if (!m) return;
+      if (i && !STOCK_CACHE[m.oid]) await new Promise(r => setTimeout(r, i * 100));  // 스태거
       try {
-        if (!STOCK_CACHE[m.oid]) {
-          if (fetched) await new Promise(r => setTimeout(r, 250));  // 연속 요청 사이에만 간격(서버 배려)
-          const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(m.oid)}&page=1`,
-            { headers: { Accept: "application/json" } });
-          if (!res.ok) return;
-          STOCK_CACHE[m.oid] = (((await res.json()).data || {}).rows || []);
-          fetched = true;
-        }
-        const mine = STOCK_CACHE[m.oid].find(r => r.id === store.id);
-        const sz = rowEl.querySelector(".sz");
-        if (sz && !sz.querySelector(".mystk")) {
-          const wait = sz.querySelector(".stk-wait");
-          if (wait) wait.remove();
+        const list = await fetchStores(m.oid);
+        // 다른 제품·다른 색상으로 넘어갔으면 반영하지 않는다(닫으면 history 상태가 먼저 바뀐다)
+        if (run !== stockRun || (history.state || {}).id !== p.id) return;
+        // 미리 그려둔 고정 높이 자리(.mystk.wait)의 내용만 바꾼다 — 행 높이가 안 변해 화면이 안 밀린다
+        const mine = list.find(r => r.id === store.id);
+        const slot = rowEl.querySelector(".sz .mystk");
+        if (slot && slot.classList.contains("wait")) {
           const n = mine ? (mine.usable_stock || 0) : null;
-          sz.insertAdjacentHTML("beforeend",
-            `<div class="mystk ${n ? "" : "zero"}">${esc(store.name)} ${n === null ? "?" : (n ? n + "개" : "없음")}</div>`);
+          slot.textContent = `${store.name} ${n === null ? "?" : (n ? n + "개" : "없음")}`;
+          slot.classList.remove("wait");
+          slot.classList.toggle("zero", !n);
         }
-      } catch (e) { return; }  // 오프라인 등 — 조용히 중단(버튼으로는 재시도 가능)
-    }
-  } finally {
-    // 못 채운 "확인 중…"은 안내 문구로 바꿔둔다(오프라인·옵션 매핑 실패 등)
-    if (run === stockRun && (history.state || {}).id === p.id)
-      $detail.querySelectorAll(".stk-wait").forEach(el => { el.textContent = "확인 불가 — [재고]를 눌러 재시도"; });
+      } catch (e) {}  // 오프라인 등 — 아래에서 안내 처리(버튼으로는 재시도 가능)
+    }));
   }
+  // 못 채운 자리는 안내로 바꿔둔다(오프라인·옵션 매핑 실패 등). wait 클래스는 남겨 재시도 시 다시 채워진다.
+  if (run === stockRun && (history.state || {}).id === p.id)
+    $detail.querySelectorAll(".mystk.wait").forEach(el => {
+      el.textContent = el.closest(".stkrow") ? "확인 불가 — [재고]를 눌러 재시도" : "?";
+    });
 }
 function closeDetail() { $detail.classList.remove("open"); }
 
@@ -1604,15 +1609,10 @@ async function openStock(bc, label) {
     const g = await fetchGallery(pid);
     const m = g.optMap && g.optMap[bc];
     if (!m) throw new Error("옵션 정보 없음");
-    if (!STOCK_CACHE[m.oid]) {
-      const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(m.oid)}&page=1`,
-        { headers: { Accept: "application/json" } });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      STOCK_CACHE[m.oid] = (((await res.json()).data || {}).rows || []);
-    }
+    const rows = await fetchStores(m.oid);
     if (!STOCK_OPEN) return;  // 기다리는 사이 닫은 경우
-    window.__stockArgs = [bc, label, m, STOCK_CACHE[m.oid]];
-    renderStockSheet(bc, label, m, STOCK_CACHE[m.oid]);
+    window.__stockArgs = [bc, label, m, rows];
+    renderStockSheet(bc, label, m, rows);
   } catch (e) {
     if (!STOCK_OPEN) return;
     sheet.querySelector(".ss-panel").innerHTML =
