@@ -385,7 +385,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.4";
+const APP_VER = "2026-08-19.5";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -454,7 +454,7 @@ async function hydrateEduImages(root, skipFolded) {
 const EDU_PW_HASH = "02f3c8e9896c0ab95e98c3fce2a3e058a23b3904b6f1ec8460f1d329835aca11";
 // 관리자 모드: 잠금(lock) 표시된 교육자료는 관리자 비밀번호를 입력한 기기에서만 수정·삭제 가능.
 // 입구는 홈 화면 footer 맨 아래의 흐린 "·" (일반 직원 눈에 잘 안 띄게). 코드엔 해시만.
-const EDU_ADMIN_HASH = "47d449f990d47fe93aba6bd4cd6ecc403a791cd6808f234fd5c5f8548536df40";
+const EDU_ADMIN_HASH = "96f5087044481c2dd820d3e0838e76c3aa22f24a8b893bf715a04fba2737cda7";
 function isAdmin() { return localStorage.getItem("eduAdmin") === "1"; }
 // 비밀번호 입력칸의 👁: 입력 내용을 보이게/숨기게 전환(오타 확인용)
 function togglePw(id, btn) {
