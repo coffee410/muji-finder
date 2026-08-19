@@ -355,6 +355,8 @@
   .ss-load { padding: 34px 16px; text-align: center; color: var(--sub); font-size: 13px; }
   .ss-hint { font-size: 11.5px; color: var(--sub); margin: 2px 18px 8px; }
   .bcrow .stockbtn { color: var(--red); }
+  .bcrow .mystk { font-size: 11px; color: var(--red); font-weight: 700; margin-top: 2px; white-space: nowrap; }
+  .bcrow .mystk.zero { color: var(--sub); font-weight: 400; }
 
   /* 바코드 스캐너 오버레이 */
   #scanner {
@@ -457,7 +459,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.18";
+const APP_VER = "2026-08-19.19";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1242,7 +1244,7 @@ function openDetail(id) {
       const szLabel = s.size ? esc(s.size) : "단일";
       const st = s.state === "SOLDOUT" ? '<div class="st">품절</div>' : "";
       const stockLb = esc((c.color && c.color !== "단품" ? c.color + " · " : "") + (s.size || "단일"));
-      html += `<div class="bcrow">
+      html += `<div class="bcrow" data-bc="${esc(s.barcode)}">
         <div class="sz">${szLabel}${st}</div>
         <div class="bc">${esc(s.barcode)}</div>
         ${p.storeOnly ? "" : `<button class="stockbtn" data-bc="${esc(s.barcode)}" data-lb="${stockLb}">재고</button>`}
@@ -1271,7 +1273,40 @@ function openDetail(id) {
       if (el) openViewer(imgs, [...box.querySelectorAll("img")].indexOf(el));
     };
   }
-  loadGallery(p);
+  loadGallery(p).then(() => loadMyStock(p));
+}
+// 상세 화면의 각 바코드 행에 자점(내 매장) 재고를 자동 표시.
+// 옵션마다 stores API 1회 — 서버 배려로 250ms 간격 순차 호출, 세션 캐시 재사용.
+async function loadMyStock(p) {
+  if (p.storeOnly) return;
+  const store = myStore();
+  let g;
+  try { g = GAL_CACHE[p.id] || await fetchGallery(p.id); } catch (e) { return; }
+  if (!g || !g.optMap) return;
+  let fetched = false;
+  for (const rowEl of [...$detail.querySelectorAll(".bcrow[data-bc]")]) {
+    // 다른 제품으로 이동했거나 상세를 닫았으면 중단
+    if ((history.state || {}).id !== p.id || !$detail.classList.contains("open")) return;
+    const m = g.optMap[rowEl.dataset.bc];
+    if (!m) continue;
+    try {
+      if (!STOCK_CACHE[m.oid]) {
+        if (fetched) await new Promise(r => setTimeout(r, 250));  // 연속 요청 사이에만 간격(서버 배려)
+        const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(m.oid)}&page=1`,
+          { headers: { Accept: "application/json" } });
+        if (!res.ok) return;
+        STOCK_CACHE[m.oid] = (((await res.json()).data || {}).rows || []);
+        fetched = true;
+      }
+      const mine = STOCK_CACHE[m.oid].find(r => r.id === store.id);
+      const sz = rowEl.querySelector(".sz");
+      if (sz && !sz.querySelector(".mystk")) {
+        const n = mine ? (mine.usable_stock || 0) : null;
+        sz.insertAdjacentHTML("beforeend",
+          `<div class="mystk ${n ? "" : "zero"}">자점 ${n === null ? "?" : (n ? n + "개" : "없음")}</div>`);
+      }
+    } catch (e) { return; }  // 오프라인 등 — 조용히 중단(버튼으로는 재시도 가능)
+  }
 }
 function closeDetail() { $detail.classList.remove("open"); }
 
@@ -1397,8 +1432,10 @@ function closeViewer() {
    내 매장(★, localStorage)은 맨 위에 강조. 옵션ID는 갤러리 fetch 응답에서 매핑. */
 let STOCK_OPEN = false;
 const STOCK_CACHE = {};  // optionId → 매장 rows (세션 캐시)
+// 자점 기본값: 스타필드 수원점(id 55). ☆로 다른 매장을 저장하면 그게 우선.
+const DEFAULT_STORE = { id: 55, name: "스타필드 수원점" };
 function myStore() {
-  try { return JSON.parse(localStorage.getItem("myStore") || "null"); } catch (e) { return null; }
+  try { return JSON.parse(localStorage.getItem("myStore") || "null") || DEFAULT_STORE; } catch (e) { return DEFAULT_STORE; }
 }
 function setMyStore(id, name) {
   localStorage.setItem("myStore", JSON.stringify({ id, name }));
