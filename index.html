@@ -506,7 +506,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.41";
+const APP_VER = "2026-08-20.42";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1740,14 +1740,8 @@ async function openStock(bc, label) {
   }
 }
 function renderStockSheet(bc, label, m, rows, q, showZero) {
-  window.__stockArgs = [bc, label, m, rows, q, showZero];  // ☆ 저장 후 재렌더 시 검색어·펼침 상태 유지
   const sheet = document.getElementById("stocksheet");
   const my = myStore();
-  const nq = norm(q || "");
-  const sorted = [...rows].sort((a, b) => (b.usable_stock || 0) - (a.usable_stock || 0) || String(a.store_name).localeCompare(b.store_name, "ko"));
-  const list = nq ? sorted.filter(r => norm(r.store_name).includes(nq)) : sorted;
-  const has = list.filter(r => (r.usable_stock || 0) > 0);
-  const zero = list.filter(r => !(r.usable_stock || 0));
   const myRow = my && rows.find(r => r.id === my.id);
   const row = (r, star) => `<div class="ss-row"><span class="n">${esc(r.store_name)}</span>
     <span class="q ${r.usable_stock ? "" : "zero"}">${r.usable_stock ? r.usable_stock + "개" : "없음"}</span>
@@ -1759,22 +1753,36 @@ function renderStockSheet(bc, label, m, rows, q, showZero) {
     : `<div class="ss-hint">☆를 누르면 우리 매장으로 저장되어 다음부터 맨 위에 표시됩니다.</div>`;
   html += `<div class="ss-online">온라인몰 ${m.stock ?? "?"}개 · 물류센터 ${m.dc ?? "?"}개 · 매장 재고는 실시간 변동될 수 있음</div>`;
   html += `<div class="ss-search"><input id="ssq" type="search" placeholder="매장 검색" autocomplete="off" value="${esc(q || "")}"></div>`;
-  html += `<div class="ss-list">`;
-  html += has.map(r => row(r, true)).join("") || (nq ? "" : '<div class="ss-load">재고 보유 매장이 없습니다</div>');
-  if (zero.length) {
-    html += (showZero || nq)
-      ? zero.map(r => row(r, true)).join("")
-      : `<button class="ss-more" id="ssZero">재고 없는 매장 ${zero.length}곳 보기</button>`;
-  }
-  html += `</div>`;
+  html += `<div class="ss-list"></div>`;
   const panel = sheet.querySelector(".ss-panel");
   panel.innerHTML = html;
   const inp = panel.querySelector("#ssq");
-  inp.addEventListener("input", () => renderStockSheet(bc, label, m, rows, inp.value, showZero));
-  const zbtn = panel.querySelector("#ssZero");
-  if (zbtn) zbtn.addEventListener("click", () => renderStockSheet(bc, label, m, rows, inp.value, true));
-  panel.querySelectorAll(".star").forEach(b =>
-    b.addEventListener("click", () => setMyStore(Number(b.dataset.sid), b.dataset.sname)));
+  const listEl = panel.querySelector(".ss-list");
+  const state = { q: q || "", showZero: !!showZero };
+  // 검색은 목록(.ss-list)만 다시 그린다. 시트 전체를 다시 그리면 입력창이 매 글자마다
+  // 새 요소로 교체돼 포커스가 날아가고(한 글자만 입력됨) 한글 조합(IME)도 끊긴다(2026-08-20 수정).
+  const drawList = () => {
+    window.__stockArgs = [bc, label, m, rows, state.q, state.showZero];  // ☆ 저장 후 재렌더 시 상태 유지
+    const nq = norm(state.q);
+    const sorted = [...rows].sort((a, b) => (b.usable_stock || 0) - (a.usable_stock || 0) || String(a.store_name).localeCompare(b.store_name, "ko"));
+    const list = nq ? sorted.filter(r => norm(r.store_name).includes(nq)) : sorted;
+    const has = list.filter(r => (r.usable_stock || 0) > 0);
+    const zero = list.filter(r => !(r.usable_stock || 0));
+    let h = has.map(r => row(r, true)).join("") || (nq ? "" : '<div class="ss-load">재고 보유 매장이 없습니다</div>');
+    if (zero.length) {
+      h += (state.showZero || nq)
+        ? zero.map(r => row(r, true)).join("")
+        : `<button class="ss-more" id="ssZero">재고 없는 매장 ${zero.length}곳 보기</button>`;
+    }
+    if (nq && !list.length) h = '<div class="ss-load">일치하는 매장이 없습니다</div>';
+    listEl.innerHTML = h;
+    const zbtn = listEl.querySelector("#ssZero");
+    if (zbtn) zbtn.addEventListener("click", () => { state.showZero = true; drawList(); });
+    listEl.querySelectorAll(".star").forEach(b =>
+      b.addEventListener("click", () => setMyStore(Number(b.dataset.sid), b.dataset.sname)));
+  };
+  inp.addEventListener("input", () => { state.q = inp.value; drawList(); });
+  drawList();
 }
 function closeStock() {
   document.getElementById("stocksheet").classList.remove("open");
