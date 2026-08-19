@@ -611,12 +611,21 @@ function renderEduDoc(id) {
       $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(d.title)}</span>
         <button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button></div>
         <div class="doc">${md2html(d.body || "")}</div>`;
+      window.__curEduDocId = id;
+      // 상세에 다녀온 경우: 저장해둔 접기·스크롤 상태 복원
+      const st = DOC_VIEW[id];
+      if (st) {
+        delete DOC_VIEW[id];
+        const folds = [...$main.querySelectorAll(".doc-fold")];
+        folds.forEach((f, i) => { if (st.folds[i]) f.open = true; });
+      }
       // 접기 밖 이미지는 즉시, 접힌 섹션 안 이미지는 펼칠 때 로드(데이터 절약)
       hydrateEduImages($main.querySelector(".doc"), true);
       $main.querySelectorAll(".doc-fold").forEach(dt => {
         dt.addEventListener("toggle", () => { if (dt.open) hydrateEduImages(dt); });
       });
-      window.scrollTo(0, 0);
+      if (st) requestAnimationFrame(() => window.scrollTo(0, st.y));
+      else window.scrollTo(0, 0);
     };
     const cached = EDU && EDU.find(x => x.id === id);
     if (cached) { draw(cached); return; }
@@ -993,9 +1002,19 @@ function openDetail(id) {
 }
 function closeDetail() { $detail.classList.remove("open"); }
 // 교육자료의 [이름](p:바코드) 링크 → 그 바코드를 가진 제품 상세를 연다
+// 이동 전에 보던 문서의 접기·스크롤 상태를 저장해, 뒤로가기로 돌아오면 그대로 복원한다
+const DOC_VIEW = {};
+function saveDocView() {
+  const id = window.__curEduDocId;
+  if (!id || !document.querySelector(".doc")) return;
+  DOC_VIEW[id] = {
+    folds: [...document.querySelectorAll(".doc-fold")].map(f => f.open),
+    y: window.scrollY,
+  };
+}
 function openByBarcode(bc) {
   const p = PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === bc)));
-  if (p) nav({ view: "product", id: p.id });
+  if (p) { saveDocView(); nav({ view: "product", id: p.id }); }
   else toast("앱 데이터에 없는 제품입니다 (" + bc + ")");
 }
 
