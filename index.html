@@ -123,7 +123,8 @@
   .d-body { padding: 16px; }
   .d-imgs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; }
   .d-imgs img { height: 150px; border-radius: 10px; border: 1px solid var(--line); background: #f0eeeb; cursor: zoom-in;
-    min-width: 112px; opacity: 0; transition: opacity .25s ease; }
+    /* flex-shrink 금지: 사진이 많을 때 눌려서 비율이 왜곡(모델이 홀쭉하게)되는 것 방지 */
+    flex: 0 0 auto; min-width: 112px; opacity: 0; transition: opacity .25s ease; }
   .d-imgs img.ld { opacity: 1; }
   .galg { margin-bottom: 10px; }
   .galg .gall { font-size: 11.5px; color: var(--sub); margin: 0 2px 5px; }
@@ -421,7 +422,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.16";
+const APP_VER = "2026-08-19.17";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
