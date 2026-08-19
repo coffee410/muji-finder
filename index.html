@@ -337,9 +337,8 @@
   .scan-head button { border: 1px solid #fff6; background: #0006; color: #fff;
     border-radius: 10px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
   .scan-head span { font-size: 13px; color: #fff; opacity: .9; }
-  /* 카메라 위 어둡기: 진하면(#00000073) 화면 전체가 어두워 보인다는 피드백 → 살짝만 */
-  .scan-mask { position: absolute; inset: 0; z-index: 1;
-    background: #00000024; pointer-events: none; }
+  /* 반투명 막 제거(카메라 화면 원래 밝기 그대로) — 프레임·문구는 자체 그라데이션으로 충분히 보임 */
+  .scan-mask { display: none; }
   .scan-frame {
     position: relative; z-index: 2; margin: auto; width: 74%; max-width: 320px; aspect-ratio: 1.4;
     border: 2px solid #fff; border-radius: 14px;
@@ -418,7 +417,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.14";
+const APP_VER = "2026-08-19.15";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
