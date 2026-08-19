@@ -417,7 +417,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.12";
+const APP_VER = "2026-08-19.13";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1383,6 +1383,7 @@ function imgUrl(url, w) {
 // @zxing/library(vendor/zxing.min.js) 사용 — iOS 사파리 포함 모든 브라우저에서 동작.
 // 라이브러리(약 360KB)는 스캔 버튼을 처음 누를 때만 로드해 초기 로딩엔 부담이 없다.
 let scanControls = null, scanReader = null, zxingLoading = null, scanHandled = false;
+let scanWatch = null, scanLastTick = 0;  // 인식 루프 생존 감시(워치독)
 function loadZxing() {
   if (window.ZXing) return Promise.resolve();
   if (zxingLoading) return zxingLoading;
@@ -1439,11 +1440,33 @@ async function openScanner() {
     ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.CODE_128,
   ]);
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  scanReader = new ZXing.BrowserMultiFormatReader(hints);
-  const onResult = result => { if (result) handleScanCode((result.getText() || "").trim()); };
+  // 2번째 인자 = 인식 시도 간격(ms). 기본 500ms는 반응이 굼떠서 100ms로.
+  scanReader = new ZXing.BrowserMultiFormatReader(hints, 100);
+  // 콜백은 성공/실패 매 시도마다 온다 → 마지막 호출 시각으로 루프 생존을 감시
+  const onResult = (result, err) => {
+    scanLastTick = Date.now();
+    if (result) handleScanCode((result.getText() || "").trim());
+  };
   try {
-    if (typeof scanReader.decodeFromStream === "function") {
-      // 이미 켜둔 카메라 스트림에 인식기만 붙인다(카메라 재시작 없음)
+    // 비디오 해상도가 잡힌 뒤에 인식을 시작해야 한다 — zxing은 시작 시점의
+    // videoWidth로 캡처 캔버스를 만들어 "재사용"하므로, 이르면 작은 크기로 굳어 인식률이 떨어진다.
+    if (!video.videoWidth) {
+      await new Promise(res => { video.addEventListener("loadedmetadata", res, { once: true }); setTimeout(res, 1500); });
+    }
+    if (typeof scanReader.decodeContinuously === "function") {
+      // 이미 재생 중인 비디오에 인식 루프만 붙인다(srcObject 재부착 없음 → 크기 레이스 원천 차단)
+      scanReader.decodeContinuously(video, onResult);
+      // 워치독: zxing은 예상 밖 예외가 한 번 나면 루프를 조용히 멈춘다 → 3초간 신호 없으면 재시작
+      scanLastTick = Date.now();
+      clearInterval(scanWatch);
+      scanWatch = setInterval(() => {
+        if (!scanReader) return;
+        if (Date.now() - scanLastTick > 3000) {
+          try { scanReader.decodeContinuously(video, onResult); } catch (e) {}
+          scanLastTick = Date.now();
+        }
+      }, 1500);
+    } else if (typeof scanReader.decodeFromStream === "function") {
       scanControls = await scanReader.decodeFromStream(stream, video, onResult);
     } else {
       // 구버전 폴백: 스트림을 끄고 기존 방식으로 재요청
@@ -1527,8 +1550,13 @@ window.srSearch = code => {
 };
 // 카메라 스트림·디코더 정지. srcObject는 그대로 둬서 마지막 프레임이 정지화면처럼 남는다.
 function stopScanStream() {
+  clearInterval(scanWatch); scanWatch = null;
   if (scanControls) { try { scanControls.stop(); } catch (e) {} scanControls = null; }
-  if (scanReader) { try { scanReader.reset(); } catch (e) {} scanReader = null; }
+  if (scanReader) {
+    try { if (scanReader.stopContinuousDecode) scanReader.stopContinuousDecode(); } catch (e) {}
+    try { scanReader.reset(); } catch (e) {}
+    scanReader = null;
+  }
   const v = document.getElementById("scanvideo");
   if (v && v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} }
 }
