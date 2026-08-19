@@ -506,7 +506,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.36";
+const APP_VER = "2026-08-19.37";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1165,12 +1165,10 @@ function doSearch(qRaw) {
   return results.map(r => r[1]);
 }
 
-/* ---------- 외부 바로가기 링크 ---------- */
-const IS_IOS = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
-const PLAY_URL = "https://play.google.com/store/apps/details?id=com.muji";
-// ※ MUJI KR 앱(com.muji) 자동 실행은 불가 — 앱에 외부 진입용 딥링크(browsable intent filter,
-// assetlinks.json)가 전혀 없어 intent URL이 어떤 환경에서도 앱을 못 연다(2026-08-19 실기기 확인).
-// 웹에서 가능한 최선: Play스토어 목록(설치돼 있으면 "열기" 버튼) 또는 온라인몰 웹페이지 직행.
+/* ---------- 외부 바로가기 링크 ----------
+   ※ MUJI KR 앱(com.muji) 자동 실행은 불가 — 앱에 외부 진입용 딥링크(browsable intent filter,
+   assetlinks.json)가 전혀 없어 intent·커스텀 스킴이 어떤 환경에서도 앱을 못 연다(2026-08-19 실기기 확인).
+   그래서 전부 온라인몰 웹으로 연결한다(앱과 내용 동일). */
 
 /* ---------- 화면 렌더 ---------- */
 function renderHome() {
@@ -1185,10 +1183,9 @@ function renderHome() {
   html += "</div>";
   // 외부 바로가기: 네이버 브랜드 스토어·공식 어플.
   // 안드로이드는 intent URL로 앱이 설치돼 있으면 바로 열고, 없으면 Play스토어로 폴백.
-  const appBtn = `<a href="${IS_IOS ? "https://apps.apple.com/kr/app/muji-kr/id6739993593" : PLAY_URL}" target="_blank" rel="noopener">📱 공식 어플 (MUJI KR)</a>`;
   html += `<div class="sec-title">바로가기</div><div class="quicklinks">
     <a href="https://brand.naver.com/mujikorea" target="_blank" rel="noopener">🛒 네이버 스마트 스토어</a>
-    ${appBtn}</div>`;
+    <a href="https://mujikorea.co.kr/" target="_blank" rel="noopener">🌐 공식 온라인몰</a></div>`;
   html += `<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.<br><span class="ver">v${APP_VER}</span><span class="adminlink" onclick='nav({view:"admin"})'>·</span></footer>`;
   $main.innerHTML = html;
 }
