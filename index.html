@@ -397,7 +397,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.8";
+const APP_VER = "2026-08-19.9";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -625,6 +625,10 @@ function init(db, extra) {
   });
   buildCatTree();
   route();
+  // 스캐너 라이브러리(360KB)를 한가할 때 미리 받아둔다 → 첫 스캔부터 카메라가 빨리 뜬다
+  if (navigator.mediaDevices && window.isSecureContext) {
+    setTimeout(() => loadZxing().catch(() => {}), 2500);
+  }
 }
 function firstImg(p) {
   // 실제 제품 사진(imgs)을 우선하고, 없을 때만 색상 칩(img·원단 확대컷)을 쓴다
@@ -1377,13 +1381,35 @@ async function openScanner() {
     toast("카메라는 https 주소에서만 됩니다"); return;
   }
   scanHandled = false;
-  document.getElementById("scanmsg").textContent = "스캐너 준비 중…";
-  document.getElementById("scanner").classList.add("open");
+  const sc = document.getElementById("scanner");
+  document.getElementById("scanmsg").textContent = "카메라 켜는 중…";
+  sc.classList.add("open");
+  const video = document.getElementById("scanvideo");
+  // 첫 프레임이 나오면 검은 화면에서 영상으로 페이드인
+  video.addEventListener("loadeddata", () => video.classList.add("on"), { once: true });
+  // 화질↑: 해상도를 높게 요청(카메라가 지원하는 최대에 가깝게)
+  const constraints = { video: { facingMode: "environment", width: { ideal: 2560 }, height: { ideal: 1440 } } };
+  // 카메라와 zxing 라이브러리를 "동시에" 준비 — 카메라가 먼저 되면 화면부터 띄운다
+  // (예전엔 라이브러리 로드가 끝나야 카메라를 요청해서 화면이 늦게 떴다)
+  const zxingP = loadZxing();
+  let stream;
   try {
-    await loadZxing();
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (e) {
+    closeScanner();
+    toast(e && e.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "카메라를 열 수 없습니다");
+    return;
+  }
+  if (!sc.classList.contains("open")) { stream.getTracks().forEach(t => t.stop()); return; }  // 기다리다 닫은 경우
+  video.srcObject = stream;
+  try { await video.play(); } catch (e) {}
+  tuneCameraFocus(video);  // 근접 초점 개선(연속 초점) — 인식 준비와 무관하게 바로
+  try {
+    await zxingP;
   } catch (e) {
     closeScanner(); toast("스캐너를 불러오지 못했습니다"); return;
   }
+  if (!sc.classList.contains("open")) return;
   // 무인양품 바코드는 EAN-13(JAN). 포맷을 좁혀 인식 속도를 높인다.
   const hints = new Map();
   hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
@@ -1392,24 +1418,25 @@ async function openScanner() {
   ]);
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   scanReader = new ZXing.BrowserMultiFormatReader(hints);
-  const video = document.getElementById("scanvideo");
-  // 첫 프레임이 나오면 검은 화면에서 영상으로 페이드인
-  video.addEventListener("loadeddata", () => video.classList.add("on"), { once: true });
-  // 화질↑: 해상도를 높게 요청(카메라가 지원하는 최대에 가깝게)
-  const constraints = { video: { facingMode: "environment", width: { ideal: 2560 }, height: { ideal: 1440 } } };
-  document.getElementById("scanmsg").textContent = "바코드를 인식하면 자동으로 제품을 찾습니다";
+  const onResult = result => {
+    if (result && !scanHandled) {
+      const code = (result.getText() || "").trim();
+      if (/^\d{8,14}$/.test(code)) { scanHandled = true; onScanned(code); }
+    }
+  };
   try {
-    scanControls = await scanReader.decodeFromConstraints(constraints, video, (result) => {
-      if (result && !scanHandled) {
-        const code = (result.getText() || "").trim();
-        if (/^\d{8,14}$/.test(code)) { scanHandled = true; onScanned(code); }
-      }
-    });
-    // 근접 초점 개선(지원하는 기기에서 자동 연속 초점 켜기 → 흐림 방지)
-    tuneCameraFocus(video);
+    if (typeof scanReader.decodeFromStream === "function") {
+      // 이미 켜둔 카메라 스트림에 인식기만 붙인다(카메라 재시작 없음)
+      scanControls = await scanReader.decodeFromStream(stream, video, onResult);
+    } else {
+      // 구버전 폴백: 스트림을 끄고 기존 방식으로 재요청
+      stream.getTracks().forEach(t => t.stop());
+      scanControls = await scanReader.decodeFromConstraints(constraints, video, onResult);
+      tuneCameraFocus(video);
+    }
   } catch (e) {
     closeScanner();
-    toast(e && e.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "카메라를 열 수 없습니다");
+    toast("카메라를 열 수 없습니다");
   }
 }
 // 카메라 트랙에 연속 자동초점을 적용해 근접 바코드가 또렷하게 잡히도록 한다(지원 기기 한정)
