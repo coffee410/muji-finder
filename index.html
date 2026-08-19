@@ -82,6 +82,8 @@
   .pcard {
     background: var(--card); border: 1px solid var(--line); border-radius: 10px;
     overflow: hidden; cursor: pointer; display: flex; flex-direction: column;
+    /* 화면 밖 카드는 렌더링을 건너뛰어 긴 목록 스크롤·검색 타이핑이 가벼워진다 */
+    content-visibility: auto; contain-intrinsic-size: auto 180px;
   }
   .pcard .ph { aspect-ratio: 1; background: #f0eeeb; display: flex; align-items: center; justify-content: center; }
   .pcard .ph img { width: 100%; height: 100%; object-fit: cover; }
@@ -99,9 +101,13 @@
   #detail {
     position: fixed; inset: 0; z-index: 50; background: var(--bg);
     max-width: 640px; margin: 0 auto; overflow-y: auto;
-    display: none; padding-bottom: 40px;
+    padding-bottom: 40px;
+    /* display 토글 대신 transform으로 오른쪽에서 밀려 들어오는 전환.
+       visibility는 duration 보간(전환 중 visible, 끝나면 hidden)으로 처리 */
+    visibility: hidden; transform: translateX(100%);
+    transition: transform .22s ease, visibility .22s;
   }
-  #detail.open { display: block; }
+  #detail.open { visibility: visible; transform: none; }
   .d-head { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line);
     padding: 12px 16px; display: flex; align-items: center; gap: 10px; z-index: 5; }
   .d-head button { border: 1px solid var(--line); background: var(--card); border-radius: 10px;
@@ -122,8 +128,9 @@
   .dimgs .dbody { padding: 0 10px 10px; }
   .dimgs .dbody img { width: 100%; border-radius: 8px; display: block; margin-bottom: 8px; background: #fff; }
   /* 사진 크게 보기 */
-  #viewer { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.93); display: none; }
-  #viewer.open { display: block; }
+  #viewer { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.93);
+    opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+  #viewer.open { opacity: 1; pointer-events: auto; }
   #viewer .vstrip { height: 100%; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; }
   #viewer .vstrip > div { flex: 0 0 100%; height: 100%; scroll-snap-align: center;
     display: flex; align-items: center; justify-content: center; padding: 8px; box-sizing: border-box; }
@@ -178,6 +185,16 @@
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   footer { text-align: center; font-size: 11px; color: var(--sub); padding: 24px 16px; line-height: 1.6; }
+  /* 관리자 입구: footer 맨 아래 흐린 점 하나(누르는 영역은 넉넉히) */
+  footer .adminlink { display: inline-block; padding: 10px 16px; color: var(--line); cursor: pointer; user-select: none; }
+  .crumb .edu-lockmark { margin-left: auto; font-size: 14px; opacity: .45; }
+  /* 본문 화면 전환: 살짝 떠오르는 페이드 */
+  @keyframes viewin { from { opacity: 0; transform: translateY(6px); } }
+  #main.vin { animation: viewin .16s ease; }
+  @media (prefers-reduced-motion: reduce) {
+    #main.vin { animation: none; }
+    #detail, #detail.open, #viewer { transition: none; }
+  }
 
   /* 탭 */
   .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
@@ -422,6 +439,42 @@ async function hydrateEduImages(root, skipFolded) {
 // 회사 문서가 들어가므로 내용은 AES-256으로 암호화해 Firestore에 저장한다.
 // 비밀번호를 잃으면 기존 내용은 복구 불가(모두 재작성 필요) — 비밀번호를 안전히 공유·보관할 것.
 const EDU_PW_HASH = "02f3c8e9896c0ab95e98c3fce2a3e058a23b3904b6f1ec8460f1d329835aca11";
+// 관리자 모드: 잠금(lock) 표시된 교육자료는 관리자 비밀번호를 입력한 기기에서만 수정·삭제 가능.
+// 입구는 홈 화면 footer 맨 아래의 흐린 "·" (일반 직원 눈에 잘 안 띄게). 코드엔 해시만.
+const EDU_ADMIN_HASH = "529c47297e906c6455b3e2394ad66a2ae34bf12b28e2867edc6dfb0bd3e1adb0";
+function isAdmin() { return localStorage.getItem("eduAdmin") === "1"; }
+function renderAdminPw() {
+  setTab("find");
+  if (isAdmin()) {
+    $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">관리자</span></div>
+      <div class="eduform">
+        <div class="warn" style="margin:4px 2px">이 기기는 관리자 모드입니다. 잠금(🔒) 자료를 수정·삭제할 수 있습니다.</div>
+        <div class="eduform-btns"><button class="edu-del" id="adminOffBtn">관리자 모드 끄기</button></div>
+      </div>`;
+    document.getElementById("adminOffBtn").addEventListener("click", () => {
+      localStorage.removeItem("eduAdmin"); toast("관리자 모드 해제됨"); history.back();
+    });
+    return;
+  }
+  $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">관리자</span></div>
+    <div class="eduform">
+      <label>관리자 비밀번호</label>
+      <input id="adminPw" type="password" placeholder="비밀번호" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false">
+      <div class="eduform-btns"><button class="edu-save" id="adminPwBtn">확인</button></div>
+    </div>`;
+  const inp = document.getElementById("adminPw");
+  const go = async () => {
+    const pw = (inp.value || "").trim().toLowerCase();
+    if (await sha256hex(pw) === EDU_ADMIN_HASH) {
+      localStorage.setItem("eduAdmin", "1");
+      toast("관리자 모드 켜짐");
+      history.back();
+    } else toast("비밀번호가 맞지 않습니다");
+  };
+  document.getElementById("adminPwBtn").addEventListener("click", go);
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  setTimeout(() => inp.focus(), 50);
+}
 let eduKey = null;  // 유도된 AES-GCM 키(메모리 캐시)
 async function sha256hex(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -566,6 +619,11 @@ function route() {
     if (!s.viewer && s.view === "product" && $detail.classList.contains("open")) return;
   }
   closeDetail();
+  // 본문 화면이 바뀔 때 짧은 페이드 전환(제품 상세는 오버레이가 자체 슬라이드)
+  if (s.view !== "product") {
+    $main.classList.remove("vin"); void $main.offsetWidth; $main.classList.add("vin");
+  }
+  if (s.view === "admin") { renderAdminPw(); return; }
   if (s.view === "edu") { renderEduList(); return; }
   if (s.view === "edudoc") { renderEduDoc(s.id); return; }
   if (s.view === "eduedit") { renderEduEdit(s.id); return; }
@@ -593,8 +651,7 @@ function renderEduList() {
   setTab("edu");
   ensureEduKey().then(key => {
     if (!key) { renderEduPw("list"); return; }
-    $main.innerHTML = '<div class="loading">교육자료 불러오는 중…</div>';
-    loadEdu(key).then(docs => {
+    const render = docs => {
       const head = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
         '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>' +
         (docs.length ? '<input class="edu-search" id="eduSearch" type="search" placeholder="교육자료 검색 (제목·내용)" autocomplete="off">' : '');
@@ -626,7 +683,20 @@ function renderEduList() {
       if (se) se.addEventListener("input", () => drawCards(se.value));
       drawCards("");
       window.scrollTo(0, 0);
-    }).catch(e => {
+    };
+    // 캐시가 있으면 즉시 그리고(탭 전환이 바로바로), 뒤에서 새로고침해 남이 고친 내용만 반영
+    const sig = docs => JSON.stringify(docs.map(d => [d.id, d.title, d.desc, d.cat, d.order]));
+    if (EDU) {
+      const before = sig(EDU);
+      render(EDU);
+      loadEdu(key).then(docs => {
+        const se = document.getElementById("eduSearch");
+        if ((history.state || {}).view === "edu" && sig(docs) !== before && !(se && se.value)) render(docs);
+      }).catch(() => {});
+      return;
+    }
+    $main.innerHTML = '<div class="loading">교육자료 불러오는 중…</div>';
+    loadEdu(key).then(render).catch(e => {
       $main.innerHTML = '<div class="empty">교육자료를 불러오지 못했습니다.<br>인터넷 연결을 확인해 주세요.<br><span style="font-size:11px">' + esc(String(e)) + '</span></div>';
     });
   });
@@ -636,8 +706,12 @@ function renderEduDoc(id) {
   ensureEduKey().then(key => {
     if (!key) { renderEduPw("list"); return; }
     const draw = d => {
+      // 잠금 문서는 관리자 모드에서만 편집 버튼 노출
+      const editBtn = (!d.lock || isAdmin())
+        ? `<button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button>`
+        : `<span class="edu-lockmark" title="관리자만 수정할 수 있습니다">🔒</span>`;
       $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(d.title)}</span>
-        <button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button></div>
+        ${editBtn}</div>
         <div class="doc">${md2html(d.body || "")}</div>`;
       window.__curEduDocId = id;
       // 상세에 다녀온 경우: 저장해둔 접기·스크롤 상태 복원
@@ -665,13 +739,16 @@ function renderEduDoc(id) {
 // 임시저장(이 기기에만 localStorage 보관) — 정식 저장 전 작성 내용 보호
 function eduDraftKey(id) { return "eduDraft:" + (id || "new"); }
 function currentEduForm() {
-  return {
+  const f = {
     title: document.getElementById("eduTitle").value,
     desc: document.getElementById("eduDesc").value,
     cat: document.getElementById("eduCat").value,
     body: document.getElementById("eduBody").value,
     order: document.getElementById("eduOrder").value,
   };
+  const lk = document.getElementById("eduLock");  // 관리자 모드에서만 존재
+  if (lk) f.lock = lk.checked;
+  return f;
 }
 function autoSaveEduDraft(id) {
   try { localStorage.setItem(eduDraftKey(id), JSON.stringify(currentEduForm())); } catch (e) {}
@@ -684,7 +761,14 @@ function clearEduDraft(id) { localStorage.removeItem(eduDraftKey(id)); renderEdu
 function renderEduEdit(id) {
   setTab("edu");
   if (!eduAuthed()) { renderEduPw(id); return; }
+  // 새로고침 직후 등 캐시가 없으면 먼저 불러와 잠금 여부부터 확인(주소 직접 진입으로 우회 방지)
+  if (id && !EDU) {
+    $main.innerHTML = '<div class="loading">불러오는 중…</div>';
+    ensureEduKey().then(key => loadEdu(key).then(() => renderEduEdit(id)).catch(() => renderEduList()));
+    return;
+  }
   const server = (EDU && EDU.find(x => x.id === id)) || { title: "", desc: "", body: "", order: 10, cat: "" };
+  if (server.lock && !isAdmin()) { toast("🔒 관리자만 수정할 수 있는 자료입니다"); history.back(); return; }
   const draft = loadEduDraft(id);
   const d = draft || server;
   const isNew = !id;
@@ -706,6 +790,9 @@ function renderEduEdit(id) {
       <textarea id="eduBody" rows="16" placeholder="# 제목&#10;&#10;내용을 입력하세요.">${esc(d.body || "")}</textarea>
       <label>정렬 순서 (작을수록 위, 숫자)</label>
       <input id="eduOrder" type="number" value="${Number(d.order) || 10}">
+      ${isAdmin() ? `<label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
+        <input type="checkbox" id="eduLock" style="width:auto" ${(d.lock !== undefined ? d.lock : isNew) ? "checked" : ""}>
+        🔒 관리자만 수정 가능 (잠금)</label>` : ""}
       <div class="eduform-btns">
         <button class="edu-save" id="eduSaveBtn">저장</button>
         <button class="edu-draft-btn" id="eduDraftSaveBtn">임시저장</button>
@@ -761,9 +848,14 @@ async function saveEdu(id) {
   if (!body.trim()) { toast("내용을 입력하세요"); return; }
   const key = await ensureEduKey();
   if (!key) { toast("비밀번호가 필요합니다"); renderEduPw("list"); return; }
+  // 잠금 문서는 관리자만 저장 가능. 잠금 여부는 암호화 내용에 포함(관리자 체크박스 또는 기존 값 유지).
+  const server = (EDU || []).find(x => x.id === id);
+  if (server && server.lock && !isAdmin()) { toast("🔒 관리자만 수정할 수 있는 자료입니다"); return; }
+  const lockEl = document.getElementById("eduLock");
+  const lock = lockEl ? lockEl.checked : !!(server && server.lock);
   try {
     const { db, fs } = await initFirebase();
-    const encrypted = await encryptObj(key, { title, desc, cat, body });  // 내용 암호화
+    const encrypted = await encryptObj(key, lock ? { title, desc, cat, body, lock: true } : { title, desc, cat, body });  // 내용 암호화
     const data = { ...encrypted, order, updatedAt: fs.serverTimestamp() };
     if (id) await fs.setDoc(fs.doc(db, "edu", id), data);
     else await fs.addDoc(fs.collection(db, "edu"), data);
@@ -776,6 +868,8 @@ async function saveEdu(id) {
   }
 }
 async function deleteEdu(id) {
+  const server = (EDU || []).find(x => x.id === id);
+  if (server && server.lock && !isAdmin()) { toast("🔒 관리자만 삭제할 수 있는 자료입니다"); return; }
   if (!confirm("이 교육자료를 삭제할까요? 되돌릴 수 없습니다.")) return;
   try {
     const { db, fs } = await initFirebase();
@@ -915,7 +1009,7 @@ function renderHome() {
     html += `<button onclick='nav({view:"cat",top:${JSON.stringify(top)}})'>${esc(top)}<span>${n.toLocaleString()}개</span></button>`;
   }
   html += "</div>";
-  html += '<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.</footer>';
+  html += `<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.<br><span class="adminlink" onclick='nav({view:"admin"})'>·</span></footer>`;
   $main.innerHTML = html;
 }
 
@@ -945,7 +1039,11 @@ function renderLeaf(leaf) {
   $main.innerHTML = html;
   window.scrollTo(0, 0);
 }
-window.renderLeafMore = leaf => { gridLimit += 60; renderLeaf(leaf); };
+window.renderLeafMore = leaf => {
+  const items = PRODUCTS.filter(p => p.cats.includes(leaf));
+  appendMore(items, gridLimit, gridLimit + 60);
+  gridLimit += 60;
+};
 
 let searchLimit = 60, lastQuery = null;
 function renderSearch(qRaw) {
@@ -959,22 +1057,36 @@ function renderSearch(qRaw) {
   }
   $main.innerHTML = html;
 }
-window.renderSearchMore = () => { searchLimit += 60; renderSearch(lastQuery); };
+window.renderSearchMore = () => {
+  appendMore(doSearch(lastQuery), searchLimit, searchLimit + 60);
+  searchLimit += 60;
+};
 
+function cardHtml(p) {
+  const img = p._img
+    ? `<img src="${esc(imgUrl(p._img, 300))}" loading="lazy" decoding="async" alt="">`
+    : '<span class="noimg">이미지 없음</span>';
+  const badge = p.storeOnly ? '<span class="store-badge">매장전용</span>'
+    : (p.state === "SOLDOUT" ? '<span class="soldout-badge">품절</span>' : "");
+  return `<div class="pcard" onclick='nav({view:"product",id:${JSON.stringify(p.id)}})'>
+    <div class="ph">${img}</div>
+    <div class="nm">${badge}${esc(p.name)}</div>
+    <div class="pr">${p.price ? p.price.toLocaleString() + "원" : ""}</div>
+  </div>`;
+}
+// "더 보기": 화면 전체를 다시 그리지 않고 그리드 뒤에 새 카드만 붙인다(이미 뜬 사진 유지, 스크롤 안 튐)
+function appendMore(items, from, to) {
+  const g = $main.querySelector(".grid"), btn = $main.querySelector("button.more");
+  if (!g) return;
+  g.insertAdjacentHTML("beforeend", items.slice(from, to).map(cardHtml).join(""));
+  if (btn) {
+    if (items.length > to) btn.textContent = `더 보기 (${items.length - to}개 남음)`;
+    else btn.remove();
+  }
+}
 function grid(items, limit, moreCall) {
   let html = '<div class="grid">';
-  for (const p of items.slice(0, limit)) {
-    const img = p._img
-      ? `<img src="${esc(imgUrl(p._img, 300))}" loading="lazy" decoding="async" alt="">`
-      : '<span class="noimg">이미지 없음</span>';
-    const badge = p.storeOnly ? '<span class="store-badge">매장전용</span>'
-      : (p.state === "SOLDOUT" ? '<span class="soldout-badge">품절</span>' : "");
-    html += `<div class="pcard" onclick='nav({view:"product",id:${JSON.stringify(p.id)}})'>
-      <div class="ph">${img}</div>
-      <div class="nm">${badge}${esc(p.name)}</div>
-      <div class="pr">${p.price ? p.price.toLocaleString() + "원" : ""}</div>
-    </div>`;
-  }
+  for (const p of items.slice(0, limit)) html += cardHtml(p);
   html += "</div>";
   if (moreCall && items.length > limit) html += `<button class="more" onclick='${moreCall}'>더 보기 (${items.length - limit}개 남음)</button>`;
   return html;
