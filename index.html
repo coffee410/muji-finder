@@ -354,6 +354,53 @@
   .edu-draft button { border: 1px solid #d8c090; background: #fff; color: #7a5a1e; border-radius: 8px;
     padding: 5px 10px; font-size: 12px; cursor: pointer; }
 
+  /* 블록 편집기 (비개발자용 간단 모드) */
+  .eb-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .eb-blk { border: 1.5px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }
+  .eb-head { display: flex; align-items: center; gap: 2px; padding: 4px 6px 4px 12px;
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .eb-type { font-size: 11.5px; color: var(--sub); font-weight: 700; flex: 1; }
+  .eb-head button { border: 0; background: none; color: var(--sub); font-size: 14px;
+    padding: 7px 9px; cursor: pointer; line-height: 1; }
+  .eb-head button:disabled { opacity: .25; }
+  .eb-head button.eb-x { color: #b0473a; }
+  .eb-blk textarea, .eb-blk input[type=text] { border: 0 !important; border-radius: 0 !important; }
+  .eb-blk textarea { min-height: 44px; overflow: hidden; resize: none; display: block; }
+  .eb-blk textarea:focus, .eb-blk input[type=text]:focus { outline: none; }
+  .eb-img-wrap { padding: 10px 12px; }
+  .eb-img-wrap img { display: block; max-width: 100%; max-height: 260px; border-radius: 8px; border: 1px solid var(--line); }
+  .eb-img-alt { border-top: 1px solid var(--line); }
+  .eb-img-alt input { font-size: 13px !important; padding: 9px 12px !important; }
+  .eb-uploading { padding: 18px 12px; text-align: center; color: var(--sub); font-size: 13px; }
+  .eb-prod-pick { padding: 10px 12px; }
+  .eb-prod-pick input { border: 1.5px solid var(--line) !important; border-radius: 10px !important;
+    font-size: 14px !important; padding: 10px 12px !important; }
+  .eb-prod-res { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .eb-prod-res button { display: flex; align-items: center; gap: 9px; border: 1px solid var(--line);
+    background: var(--card); border-radius: 10px; padding: 7px 9px; cursor: pointer; text-align: left; color: var(--ink); }
+  .eb-prod-res img { width: 36px; height: 36px; border-radius: 7px; object-fit: cover; background: #f0eeeb; flex-shrink: 0; }
+  .eb-prod-res .nm { font-size: 12.5px; line-height: 1.35; }
+  .eb-prod-sel { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+  .eb-prod-sel img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #f0eeeb; flex-shrink: 0; }
+  .eb-prod-sel .nm { flex: 1; font-size: 13px; font-weight: 600; line-height: 1.35; min-width: 0; }
+  .eb-prod-sel .bc { font-size: 11.5px; color: var(--sub); font-family: ui-monospace, Consolas, monospace; font-weight: 400; }
+  .eb-prod-sel button { border: 1px solid var(--line); background: var(--card); color: var(--sub);
+    border-radius: 8px; padding: 6px 9px; font-size: 12px; cursor: pointer; flex-shrink: 0; }
+  .eb-nores { font-size: 12px; color: var(--sub); padding: 6px 2px; }
+  .eb-hr { padding: 14px 12px; }
+  .eb-hr div { height: 2px; background: var(--line); border-radius: 1px; }
+  .eb-addbar { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .eb-addbar button { border: 1.5px dashed var(--line); background: var(--card); color: var(--ink);
+    border-radius: 10px; padding: 10px 12px; font-size: 13px; cursor: pointer; font-weight: 600; }
+  .eb-addbar button:active { background: var(--bg); }
+  .eb-tools { display: flex; gap: 6px; margin: 10px 0 2px; align-items: center; flex-wrap: wrap; }
+  .eb-tools button { border: 1px solid var(--line); background: var(--card); color: var(--sub);
+    border-radius: 10px; padding: 8px 11px; font-size: 12.5px; cursor: pointer; }
+  .eb-tools button.on { color: var(--red); border-color: var(--red); }
+  #eduPreview { border: 1.5px dashed var(--line); border-radius: 12px; padding: 4px 14px 10px; margin-top: 8px;
+    background: var(--card); }
+  #eduPreview .pv-tag { font-size: 11px; color: var(--sub); font-weight: 700; margin: 8px 0 0; }
+
   /* 검색줄 + 스캔 버튼 */
   .searchrow { display: flex; gap: 8px; align-items: stretch; }
   .searchrow .searchwrap { flex: 1; }
@@ -507,7 +554,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.46";
+const APP_VER = "2026-08-20.47";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -908,7 +955,7 @@ function currentEduForm() {
     title: document.getElementById("eduTitle").value,
     desc: document.getElementById("eduDesc").value,
     cat: document.getElementById("eduCat").value,
-    body: document.getElementById("eduBody").value,
+    body: getEduBody(),
     order: document.getElementById("eduOrder").value,
   };
   const lk = document.getElementById("eduLock");  // 관리자 모드에서만 존재
@@ -923,6 +970,352 @@ function loadEduDraft(id) {
   try { return JSON.parse(localStorage.getItem(eduDraftKey(id)) || "null"); } catch (e) { return null; }
 }
 function clearEduDraft(id) { localStorage.removeItem(eduDraftKey(id)); renderEduEdit(id); }
+
+/* ---------- 블록 편집기 (비개발자용 간단 모드) ----------
+   내부 저장 형식은 기존 마크다운 그대로(뷰어·기존 문서 호환).
+   편집 화면에서만 블록(소제목·글·사진·제품·구분선)으로 오가며,
+   "마크다운으로 편집(고급)" 버튼으로 언제든 예전 textarea 방식으로 전환할 수 있다. */
+let EB = [];       // 편집 중인 블록 배열
+let EB_SEQ = 0;    // 블록 고유 키(그릴 때마다 부여)
+let EB_ID = null;  // 편집 중인 문서 id(임시저장 키용, 신규는 "")
+let EB_UP = 0;     // 진행 중인 사진 업로드 수(저장 잠금용)
+const EB_TYPE_LABEL = { h: "소제목", p: "글", img: "사진", prod: "제품 카드", hr: "구분선" };
+function eduEditMode() { return localStorage.getItem("eduEditMode") || "block"; }
+function ebFind(k) { return EB.findIndex(b => b._k === k); }
+function ebChanged() { autoSaveEduDraft(EB_ID); }
+
+// 마크다운 → 블록. md2html이 인식하는 특수 줄(제목·사진·@p·구분선·표·접기)만 분리하고
+// 나머지(목록·인용·체크 포함)는 통째로 "글" 블록에 담는다 — 렌더 결과가 달라지지 않게.
+function ebParse(md) {
+  const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
+  const blocks = [];
+  let text = [];
+  const flushText = () => {
+    while (text.length && !text[0].trim()) text.shift();
+    while (text.length && !text[text.length - 1].trim()) text.pop();
+    if (text.length) blocks.push({ t: "p", text: text.join("\n") });
+    text = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i], tr = line.trim();
+    let m;
+    if (/^\+\+\+\s*\S/.test(tr)) {
+      // 접기 블록: 닫는 +++까지 통째로 마크다운 블록으로(중첩 지원)
+      flushText();
+      let depth = 1, j = i + 1;
+      for (; j < lines.length && depth > 0; j++) {
+        const t2 = lines[j].trim();
+        if (/^\+\+\+\s*\S/.test(t2)) depth++;
+        else if (/^\+\+\+$/.test(t2)) depth--;
+      }
+      blocks.push({ t: "md", text: lines.slice(i, j).join("\n"), kind: "접기" });
+      i = j - 1;
+    } else if (tr.startsWith("|")) {
+      flushText();
+      let j = i;
+      while (j < lines.length && lines[j].trim().startsWith("|")) j++;
+      blocks.push({ t: "md", text: lines.slice(i, j).join("\n"), kind: "표" });
+      i = j - 1;
+    } else if ((m = line.match(/^(#{1,3})\s+(.*)$/))) {
+      flushText(); blocks.push({ t: "h", n: m[1].length, text: m[2] });
+    } else if ((m = line.match(/^!\[([^\]]*)\]\(eimg:([A-Za-z0-9]+)\)\s*$/))) {
+      flushText(); blocks.push({ t: "img", alt: m[1], eimg: m[2] });
+    } else if ((m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/))) {
+      flushText(); blocks.push({ t: "img", alt: m[1], url: m[2] });
+    } else if ((m = line.match(/^@p\s+(\d{8,14})(?:\s+(.+))?$/))) {
+      flushText(); blocks.push({ t: "prod", bc: m[1], name: (m[2] || "").trim() });
+    } else if (/^---+$/.test(tr)) {
+      flushText(); blocks.push({ t: "hr" });
+    } else {
+      text.push(line);
+    }
+  }
+  flushText();
+  blocks.forEach(b => { b._k = ++EB_SEQ; });
+  return blocks;
+}
+function ebBlockMd(b) {
+  const alt = s => String(s || "").replace(/[\[\]()]/g, " ").trim();  // 사진 설명이 문법을 깨지 않게
+  if (b.t === "h") return "#".repeat(b.n || 1) + " " + (b.text || "").trim();
+  if (b.t === "p" || b.t === "md") return b.text || "";
+  if (b.t === "img") {
+    if (b._up) return "";
+    if (b.eimg) return `![${alt(b.alt)}](eimg:${b.eimg})`;
+    return b.url ? `![${alt(b.alt)}](${b.url})` : "";
+  }
+  if (b.t === "prod") return b.bc ? "@p " + b.bc + (b.name ? " " + b.name : "") : "";
+  if (b.t === "hr") return "---";
+  return "";
+}
+function ebSerialize() {
+  return EB.map(ebBlockMd).map(s => s.replace(/\s+$/, "")).filter(Boolean).join("\n\n");
+}
+// 현재 편집 화면의 본문(모드 무관): 마크다운 모드면 textarea, 아니면 블록 직렬화
+function getEduBody() {
+  const ta = document.getElementById("eduBody");
+  return ta ? ta.value : ebSerialize();
+}
+function ebGrow(el) { el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; }
+function firstBarcode(p) {
+  for (const c of p.colors || []) for (const s of c.sizes || []) if (s.barcode) return s.barcode;
+  return "";
+}
+function ebBlockHtml(b, i) {
+  const label = b.t === "md" ? (b.kind ? b.kind + " (마크다운)" : "고급 (마크다운)") : (EB_TYPE_LABEL[b.t] || b.t);
+  const head = `<div class="eb-head"><span class="eb-type">${label}</span>` +
+    `<button type="button" onclick="ebMove(${b._k},-1)"${i === 0 ? " disabled" : ""} aria-label="위로">▲</button>` +
+    `<button type="button" onclick="ebMove(${b._k},1)"${i === EB.length - 1 ? " disabled" : ""} aria-label="아래로">▼</button>` +
+    `<button type="button" class="eb-x" onclick="ebDel(${b._k})" aria-label="삭제">✕</button></div>`;
+  let body = "";
+  if (b.t === "h") {
+    body = `<input type="text" data-ebk="${b._k}" data-f="text" value="${esc(b.text || "")}" placeholder="소제목을 쓰세요">`;
+  } else if (b.t === "p") {
+    body = `<textarea data-ebk="${b._k}" data-f="text" placeholder="내용을 쓰세요. 줄 앞에 '- '를 붙이면 목록으로 보입니다.">${esc(b.text || "")}</textarea>`;
+  } else if (b.t === "md") {
+    body = `<textarea data-ebk="${b._k}" data-f="text">${esc(b.text || "")}</textarea>`;
+  } else if (b.t === "hr") {
+    body = `<div class="eb-hr"><div></div></div>`;
+  } else if (b.t === "img") {
+    if (b._up) body = `<div class="eb-uploading">📷 사진 올리는 중…</div>`;
+    else {
+      const src = b.url ? ` src="${esc(b.url)}"` :
+        (EIMG_CACHE[b.eimg] ? ` src="${EIMG_CACHE[b.eimg]}"` : ` data-eimg="${esc(b.eimg || "")}"`);
+      body = `<div class="eb-img-wrap"><img${src} alt=""></div>
+        <div class="eb-img-alt"><input type="text" data-ebk="${b._k}" data-f="alt" value="${esc(b.alt || "")}" placeholder="사진 설명 (선택)"></div>`;
+    }
+  } else if (b.t === "prod") {
+    if (b.bc) {
+      const prod = PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === b.bc)));
+      const nm = b.name || (prod ? prod.name : "(앱 데이터에 없는 제품)");
+      const im = prod && prod._img ? `<img src="${esc(imgUrl(prod._img, 100))}" alt="">` : "";
+      body = `<div class="eb-prod-sel">${im}<div class="nm">${esc(nm)}<div class="bc">${esc(b.bc)}</div></div>
+        <button type="button" onclick="ebProdClear(${b._k})">바꾸기</button></div>`;
+    } else {
+      body = `<div class="eb-prod-pick">
+        <input type="text" data-ebk="${b._k}" data-f="psearch" placeholder="제품명으로 검색 (예: 파일박스)" autocomplete="off">
+        <div class="eb-prod-res" id="ebpr${b._k}"></div></div>`;
+    }
+  }
+  return `<div class="eb-blk">${head}${body}</div>`;
+}
+function renderBlocks() {
+  const list = document.getElementById("ebList");
+  if (!list) return;
+  list.innerHTML = EB.map(ebBlockHtml).join("");
+  // 타이핑 중에는 다시 그리지 않는다(포커스·한글 입력 보호) — 값만 블록에 반영
+  list.querySelectorAll("[data-ebk]").forEach(el => {
+    const k = Number(el.getAttribute("data-ebk")), f = el.getAttribute("data-f");
+    if (f === "psearch") { el.addEventListener("input", () => ebProdSearch(k, el.value)); return; }
+    el.addEventListener("input", () => {
+      const b = EB[ebFind(k)];
+      if (!b) return;
+      b[f] = el.value;
+      if (el.tagName === "TEXTAREA") ebGrow(el);
+      ebChanged();
+    });
+  });
+  list.querySelectorAll("textarea").forEach(ebGrow);
+  hydrateEduImages(list);
+}
+function ebMove(k, dir) {
+  const i = ebFind(k), j = i + dir;
+  if (i < 0 || j < 0 || j >= EB.length) return;
+  [EB[i], EB[j]] = [EB[j], EB[i]];
+  renderBlocks(); ebChanged();
+}
+function ebDel(k) {
+  const i = ebFind(k);
+  if (i < 0) return;
+  const b = EB[i];
+  if (b.t !== "hr" && ebBlockMd(b).trim() && !confirm("이 블록을 삭제할까요?")) return;
+  EB.splice(i, 1);
+  renderBlocks(); ebChanged();
+}
+function ebAdd(type) {
+  if (type === "img") { ebPickImage(); return; }
+  const b = { t: type, _k: ++EB_SEQ };
+  if (type === "h") { b.n = 1; b.text = ""; }
+  if (type === "p") b.text = "";
+  if (type === "prod") { b.bc = ""; b.name = ""; }
+  EB.push(b);
+  renderBlocks(); ebChanged();
+  const el = document.querySelector(`#ebList [data-ebk="${b._k}"]`);
+  if (el) { el.focus(); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  else {
+    const list = document.getElementById("ebList");
+    if (list && list.lastElementChild) list.lastElementChild.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+function ebProdSet(k, bc) {
+  const b = EB[ebFind(k)];
+  if (!b) return;
+  b.bc = bc; b.name = "";
+  renderBlocks(); ebChanged();
+}
+function ebProdClear(k) {
+  const b = EB[ebFind(k)];
+  if (!b) return;
+  b.bc = ""; b.name = "";
+  renderBlocks(); ebChanged();
+}
+function ebProdSearch(k, q) {
+  const box = document.getElementById("ebpr" + k);
+  if (!box) return;
+  const nq = norm(q);
+  if (!nq) { box.innerHTML = ""; return; }
+  const hits = [];
+  for (const p of PRODUCTS) {
+    if (!norm(p.name).includes(nq)) continue;
+    const bc = firstBarcode(p);
+    if (!bc) continue;  // 바코드 없는 제품(기프트카드 등)은 카드로 못 넣는다
+    hits.push({ p, bc });
+    if (hits.length >= 6) break;
+  }
+  box.innerHTML = hits.length ? hits.map(h =>
+    `<button type="button" onclick="ebProdSet(${k},'${h.bc}')">` +
+    (h.p._img ? `<img src="${esc(imgUrl(h.p._img, 100))}" loading="lazy" alt="">` : "") +
+    `<span class="nm">${esc(h.p.name)}</span></button>`).join("")
+    : '<div class="eb-nores">검색 결과가 없습니다</div>';
+}
+/* 사진 업로드: 기기에서 골라 → 축소·압축 → 암호화해 분리 문서(eimg)로 저장 → 블록에 연결 */
+function ebPickImage() {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "image/*";
+  inp.onchange = () => {
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    const b = { t: "img", _k: ++EB_SEQ, _up: true };
+    EB.push(b);
+    renderBlocks();
+    const list = document.getElementById("ebList");
+    if (list && list.lastElementChild) list.lastElementChild.scrollIntoView({ block: "center" });
+    ebUpload(file, b._k);
+  };
+  inp.click();
+}
+async function ebUpload(file, k) {
+  EB_UP++;
+  try {
+    const dataUri = await compressEduImage(file);
+    const id = await saveEduImage(dataUri);
+    const b = EB[ebFind(k)];
+    if (!b) return;  // 올리는 사이 블록이 지워짐(문서는 안 쓰인 채 남지만 목록엔 안 보임)
+    delete b._up;
+    b.eimg = id; b.alt = b.alt || "";
+    EIMG_CACHE[id] = dataUri;
+    renderBlocks(); ebChanged();
+  } catch (e) {
+    const i = ebFind(k);
+    if (i >= 0) { EB.splice(i, 1); renderBlocks(); }
+    toast("사진 업로드 실패: " + (e && e.message || "오류"));
+  } finally { EB_UP--; }
+}
+// 암호화 후 Firestore 문서 제한(enc<900000자)에 들어가도록 최대 60만 자 데이터URI로 압축
+async function compressEduImage(file) {
+  let img = null;
+  try { img = await createImageBitmap(file); } catch (e) {}
+  if (!img) {
+    img = await new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error("이미지를 읽을 수 없습니다"));
+      im.src = URL.createObjectURL(file);
+    });
+  }
+  const W = img.width, H = img.height;
+  if (!W || !H) throw new Error("이미지를 읽을 수 없습니다");
+  const cv = document.createElement("canvas");
+  const ctx = cv.getContext("2d");
+  for (const maxSide of [1400, 1100, 900, 700]) {
+    const s = Math.min(1, maxSide / Math.max(W, H));
+    cv.width = Math.max(1, Math.round(W * s));
+    cv.height = Math.max(1, Math.round(H * s));
+    ctx.fillStyle = "#fff";                       // PNG 투명 배경 → 흰색
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    for (const q of [0.82, 0.7, 0.58]) {
+      const uri = cv.toDataURL("image/jpeg", q);
+      if (uri.length <= 600000) return uri;
+    }
+  }
+  throw new Error("사진 용량을 줄이지 못했습니다");
+}
+async function saveEduImage(dataUri) {
+  const key = await ensureEduKey();
+  if (!key) throw new Error("비밀번호가 필요합니다");
+  const { db, fs } = await initFirebase();
+  const encrypted = await encryptObj(key, { type: "img", src: dataUri });
+  if (encrypted.enc.length >= 900000) throw new Error("사진이 너무 큽니다");
+  const ref = await fs.addDoc(fs.collection(db, "edu"), { ...encrypted, order: 9999, updatedAt: fs.serverTimestamp() });
+  return ref.id;
+}
+/* 마크다운(고급) 모드에서도 같은 방식으로 사진을 넣을 수 있게 */
+function mdPickImage() {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "image/*";
+  inp.onchange = async () => {
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    toast("📷 사진 올리는 중…");
+    try {
+      const uri = await compressEduImage(file);
+      const id = await saveEduImage(uri);
+      EIMG_CACHE[id] = uri;
+      const ta = document.getElementById("eduBody");
+      if (!ta) return;
+      const pos = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+      ta.value = ta.value.slice(0, pos) + "\n![사진](eimg:" + id + ")\n" + ta.value.slice(pos);
+      autoSaveEduDraft(EB_ID);
+      toast("사진이 추가되었습니다");
+    } catch (e) { toast("사진 업로드 실패: " + (e && e.message || "오류")); }
+  };
+  inp.click();
+}
+function ebTogglePreview() {
+  const btn = document.getElementById("ebPvBtn");
+  let pv = document.getElementById("eduPreview");
+  if (pv) { pv.remove(); if (btn) btn.classList.remove("on"); return; }
+  pv = document.createElement("div");
+  pv.id = "eduPreview";
+  pv.innerHTML = '<p class="pv-tag">👁 미리보기 — 저장하면 이렇게 보입니다</p><div class="doc">' + md2html(getEduBody()) + "</div>";
+  btn.closest(".eb-tools").after(pv);
+  btn.classList.add("on");
+  hydrateEduImages(pv);
+}
+function ebToggleMode() {
+  const body = getEduBody();  // 지금까지 쓴 내용을 그대로 들고 전환
+  localStorage.setItem("eduEditMode", eduEditMode() === "md" ? "block" : "md");
+  const pv = document.getElementById("eduPreview");
+  if (pv) { pv.remove(); const btn = document.getElementById("ebPvBtn"); if (btn) btn.classList.remove("on"); }
+  renderEduBodyArea(body);
+  autoSaveEduDraft(EB_ID);
+}
+function renderEduBodyArea(body) {
+  const area = document.getElementById("eduBodyArea");
+  const modeBtn = document.getElementById("ebModeBtn");
+  if (!area) return;
+  if (eduEditMode() === "md") {
+    area.innerHTML = `<div class="eb-tools" style="margin:2px 0 6px">
+        <button type="button" onclick="mdPickImage()">📷 사진 넣기</button>
+        <span style="font-size:11.5px;color:var(--sub)"># 제목 · - 목록 · - [ ] 체크 · &gt; 인용 · **굵게** · +++ 접기</span></div>
+      <textarea id="eduBody" rows="16" placeholder="# 제목&#10;&#10;내용을 입력하세요.">${esc(body || "")}</textarea>`;
+    document.getElementById("eduBody").addEventListener("input", () => autoSaveEduDraft(EB_ID));
+    if (modeBtn) modeBtn.textContent = "🧱 간단 편집으로 바꾸기";
+  } else {
+    EB = ebParse(body);
+    if (!EB.length) EB = [{ t: "p", text: "", _k: ++EB_SEQ }];
+    area.innerHTML = `<div class="eb-list" id="ebList"></div>
+      <div class="eb-addbar">
+        <button type="button" onclick="ebAdd('p')">＋ 글</button>
+        <button type="button" onclick="ebAdd('img')">＋ 사진</button>
+        <button type="button" onclick="ebAdd('h')">＋ 소제목</button>
+        <button type="button" onclick="ebAdd('prod')">＋ 제품 카드</button>
+        <button type="button" onclick="ebAdd('hr')">＋ 구분선</button>
+      </div>`;
+    renderBlocks();
+    if (modeBtn) modeBtn.textContent = "</> 마크다운으로 편집 (고급)";
+  }
+}
 function renderEduEdit(id) {
   setTab("edu");
   if (!eduAuthed()) { renderEduPw(id); return; }
@@ -951,8 +1344,12 @@ function renderEduEdit(id) {
       <label>카테고리 (목록에서 묶어서 보여줍니다)</label>
       <input id="eduCat" type="text" list="eduCatList" value="${esc(d.cat || "")}" placeholder="예: 제품 지식">
       <datalist id="eduCatList">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist>
-      <label>내용 (마크다운: # 제목, - 목록, - [ ] 체크리스트, > 인용, **굵게**)</label>
-      <textarea id="eduBody" rows="16" placeholder="# 제목&#10;&#10;내용을 입력하세요.">${esc(d.body || "")}</textarea>
+      <label>내용</label>
+      <div id="eduBodyArea"></div>
+      <div class="eb-tools">
+        <button type="button" id="ebPvBtn" onclick="ebTogglePreview()">👁 미리보기</button>
+        <button type="button" id="ebModeBtn" onclick="ebToggleMode()"></button>
+      </div>
       <label>정렬 순서 (작을수록 위, 숫자)</label>
       <input id="eduOrder" type="number" value="${Number(d.order) || 10}">
       ${isAdmin() ? `<label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
@@ -965,13 +1362,15 @@ function renderEduEdit(id) {
       </div>
       <div class="warn" style="margin:10px 2px">‘저장’은 모두에게 공유됩니다. ‘임시저장’은 이 기기에만 보관되어 나중에 이어서 쓸 수 있습니다.</div>
     </div>`;
+  EB_ID = id;
+  renderEduBodyArea(d.body || "");
   document.getElementById("eduSaveBtn").addEventListener("click", () => saveEdu(id));
   document.getElementById("eduDraftSaveBtn").addEventListener("click", () => saveEduDraft(id));
   const delBtn = document.getElementById("eduDelBtn");
   if (delBtn) delBtn.addEventListener("click", () => deleteEdu(id));
   const clearBtn = document.getElementById("eduDraftClear");
   if (clearBtn) clearBtn.addEventListener("click", () => clearEduDraft(id));
-  ["eduTitle", "eduDesc", "eduCat", "eduBody", "eduOrder"].forEach(fid => {
+  ["eduTitle", "eduDesc", "eduCat", "eduOrder"].forEach(fid => {
     const el = document.getElementById(fid);
     if (el) el.addEventListener("input", () => autoSaveEduDraft(id));
   });
@@ -1009,10 +1408,11 @@ async function saveEdu(id) {
   const title = document.getElementById("eduTitle").value.trim();
   const desc = document.getElementById("eduDesc").value.trim();
   const cat = document.getElementById("eduCat").value.trim();
-  const body = document.getElementById("eduBody").value;
+  const body = getEduBody();
   const order = Number(document.getElementById("eduOrder").value) || 10;
   if (!title) { toast("제목을 입력하세요"); return; }
   if (!body.trim()) { toast("내용을 입력하세요"); return; }
+  if (EB_UP > 0) { toast("사진 업로드가 끝날 때까지 잠깐만 기다려 주세요"); return; }
   const key = await ensureEduKey();
   if (!key) { toast("비밀번호가 필요합니다"); renderEduPw("list"); return; }
   // 잠금 문서는 관리자만 저장 가능. 잠금 여부는 암호화 내용에 포함(관리자 체크박스 또는 기존 값 유지).
