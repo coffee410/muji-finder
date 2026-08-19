@@ -438,6 +438,10 @@
   }
   #scanresult.show { transform: none; opacity: 1; }
   .sr-top { display: flex; gap: 10px; align-items: center; }
+  /* 스캔 결과의 자점 재고 줄 — 한 줄 자리를 미리 확보(채워질 때 카드가 안 움직이게) */
+  .sr-stk { margin: 8px 2px 0; font-size: 12.5px; font-weight: 700; color: var(--red); min-height: 17px; }
+  .sr-stk.zero { color: #8a8681; }
+  .sr-stk.wait { color: #8a8681; font-weight: 400; }
   .sr-top img { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; background: #f0eeeb; }
   .sr-tx { flex: 1; min-width: 0; }
   .sr-nm { font-size: 14px; font-weight: 700; line-height: 1.35;
@@ -493,7 +497,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.27";
+const APP_VER = "2026-08-19.28";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1901,11 +1905,14 @@ function onScanned(code) {
   const el = document.getElementById("scanresult");
   if (hit) {
     const img = hit._img ? `<img src="${esc(imgUrl(hit._img, 100))}" alt="">` : "";
+    // 자점 재고 줄 — 자리를 미리 잡아두고(레이아웃 고정) srStock이 비동기로 채운다
+    const stkLine = hit.storeOnly ? "" : `<div class="sr-stk wait" id="srstk" data-code="${esc(code)}">${esc(myStore().name)} 재고 확인 중…</div>`;
     el.innerHTML = `<div class="sr-top">${img}<div class="sr-tx"><div class="sr-nm">${esc(hit.name)}</div>
       <div class="sr-sub">${hit.price ? hit.price.toLocaleString() + "원 · " : ""}${esc(code)}</div></div>
-      <button class="sr-x" onclick="hideScanResult()">✕</button></div>
+      <button class="sr-x" onclick="hideScanResult()">✕</button></div>${stkLine}
       <div class="sr-btns"><button onclick='srCopy(${JSON.stringify(hit.id)})'>제품명 복사</button>
       <button class="pri" onclick='srDetail(${JSON.stringify(hit.id)})'>상세 보기</button></div>`;
+    if (!hit.storeOnly) srStock(hit, code);
   } else {
     el.innerHTML = `<div class="sr-top"><div class="sr-tx"><div class="sr-nm">일치 제품 없음</div>
       <div class="sr-sub">${esc(code)}</div></div>
@@ -1919,6 +1926,26 @@ function hideScanResult() {
   lastScan = { code: null, t: 0 };  // 카드를 닫으면 같은 제품도 바로 다시 찍을 수 있게
 }
 window.srCopy = id => { const p = PRODUCTS.find(x => x.id === id); if (p) copyText(p.name, "제품명 복사됨"); };
+// 스캔 결과 카드의 자점 재고 — 스캔한 바코드(=해당 색상·사이즈 옵션)의 내 매장 수량
+async function srStock(p, code) {
+  const store = myStore();
+  let txt, zero;
+  try {
+    const g = await fetchGallery(p.id);
+    const m = g.optMap && g.optMap[code];
+    if (!m) throw new Error("옵션 없음");
+    const rows = await fetchStores(m.oid);
+    const mine = rows.find(r => r.id === store.id);
+    const n = mine ? (mine.usable_stock || 0) : null;
+    txt = `${store.name} ${n === null ? "?" : (n ? n + "개" : "재고 없음")}`;
+    zero = !n;
+  } catch (e) { txt = `${store.name} 재고 확인 불가`; zero = true; }
+  const slot = document.getElementById("srstk");
+  if (!slot || slot.dataset.code !== code) return;  // 그 사이 다른 스캔으로 카드가 바뀜
+  slot.textContent = txt;
+  slot.classList.remove("wait");
+  slot.classList.toggle("zero", zero);
+}
 // 상세/검색으로 나갈 때: 다음 화면을 스캐너 뒤에서 먼저 그린 뒤 스캐너만 페이드아웃(크로스페이드)
 window.srDetail = id => {
   scanHandled = true;
