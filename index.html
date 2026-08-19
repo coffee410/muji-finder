@@ -286,6 +286,12 @@
   }
   .eduform textarea { line-height: 1.6; resize: vertical; }
   .eduform input:focus, .eduform textarea:focus { border-color: var(--red); }
+  /* 비밀번호 입력: 👁 버튼으로 입력 내용 확인 */
+  .pwwrap { position: relative; }
+  .pwwrap input { padding-right: 48px; box-sizing: border-box; }
+  .pwwrap .pweye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    border: 0; background: none; font-size: 17px; padding: 8px 10px; cursor: pointer; opacity: .55; }
+  footer .ver { opacity: .6; }
   .eduform-btns { display: flex; gap: 8px; margin-top: 14px; }
   .edu-save { flex: 1; border: 0; background: var(--red); color: #fff; border-radius: 10px;
     padding: 13px; font-size: 15px; font-weight: 600; cursor: pointer; }
@@ -378,6 +384,8 @@
 
 <script>
 "use strict";
+// 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
+const APP_VER = "2026-08-19.4";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -448,6 +456,20 @@ const EDU_PW_HASH = "02f3c8e9896c0ab95e98c3fce2a3e058a23b3904b6f1ec8460f1d329835
 // 입구는 홈 화면 footer 맨 아래의 흐린 "·" (일반 직원 눈에 잘 안 띄게). 코드엔 해시만.
 const EDU_ADMIN_HASH = "47d449f990d47fe93aba6bd4cd6ecc403a791cd6808f234fd5c5f8548536df40";
 function isAdmin() { return localStorage.getItem("eduAdmin") === "1"; }
+// 비밀번호 입력칸의 👁: 입력 내용을 보이게/숨기게 전환(오타 확인용)
+function togglePw(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.type = el.type === "password" ? "text" : "password";
+  btn.textContent = el.type === "password" ? "👁" : "🙈";
+  el.focus();
+}
+function pwField(id, placeholder) {
+  return `<div class="pwwrap">
+    <input id="${id}" type="password" placeholder="${placeholder}" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false">
+    <button type="button" class="pweye" onclick="togglePw('${id}', this)" aria-label="비밀번호 표시">👁</button>
+  </div>`;
+}
 function renderAdminPw() {
   // 홈 footer(제품 찾기 탭)와 잠긴 문서의 🔒(교육자료 탭) 양쪽에서 들어오므로 탭 표시는 바꾸지 않는다
   if (isAdmin()) {
@@ -464,7 +486,7 @@ function renderAdminPw() {
   $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">관리자</span></div>
     <div class="eduform">
       <label>관리자 비밀번호</label>
-      <input id="adminPw" type="password" placeholder="비밀번호" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false">
+      ${pwField("adminPw", "비밀번호")}
       <div class="eduform-btns"><button class="edu-save" id="adminPwBtn">확인</button></div>
     </div>`;
   const inp = document.getElementById("adminPw");
@@ -822,7 +844,7 @@ function renderEduPw(next) {
   $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button><span class="path">교육자료 비밀번호</span></div>
     <div class="eduform">
       <label>매장 공용 비밀번호를 입력하세요</label>
-      <input id="eduPw" type="password" placeholder="비밀번호" autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false">
+      ${pwField("eduPw", "비밀번호")}
       <div class="eduform-btns"><button class="edu-save" id="eduPwBtn">확인</button></div>
       <div class="warn" style="margin:8px 2px">🔒 교육자료는 암호화되어 있어 비밀번호가 있어야 열람·편집할 수 있습니다.</div>
     </div>`;
@@ -1014,7 +1036,7 @@ function renderHome() {
     html += `<button onclick='nav({view:"cat",top:${JSON.stringify(top)}})'>${esc(top)}<span>${n.toLocaleString()}개</span></button>`;
   }
   html += "</div>";
-  html += `<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.<br><span class="adminlink" onclick='nav({view:"admin"})'>·</span></footer>`;
+  html += `<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.<br><span class="ver">v${APP_VER}</span><span class="adminlink" onclick='nav({view:"admin"})'>·</span></footer>`;
   $main.innerHTML = html;
 }
 
