@@ -188,7 +188,7 @@
   .spec-v { flex: 1; min-width: 0; line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; user-select: all; }
   .spec-v.mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 15px; letter-spacing: 0.5px; }
   /* 스펙 표의 재고 행(단일 바코드 제품 — 하단 바코드 블록 대신) */
-  .stkrow { align-items: center; }
+  .stkrow, .coderow { align-items: center; }
   .spec-row .sbtn {
     border: 1px solid var(--line); background: var(--bg); border-radius: 8px;
     padding: 7px 12px; font-size: 12.5px; cursor: pointer; color: var(--ink); flex-shrink: 0;
@@ -370,7 +370,7 @@
   .ss-load { padding: 34px 16px; text-align: center; color: var(--sub); font-size: 13px; }
   .ss-hint { font-size: 11.5px; color: var(--sub); margin: 2px 18px 8px; }
   .bcrow .stockbtn { color: var(--red); }
-  .bcrow .mystk { font-size: 11px; color: var(--red); font-weight: 700; margin-top: 2px; white-space: nowrap; }
+  .bcrow .mystk { font-size: 11px; color: var(--red); font-weight: 700; margin-top: 2px; max-width: 88px; word-break: keep-all; }  /* 매장명이 길면 공백 단위로 줄바꿈 */
   .bcrow .mystk.zero { color: var(--sub); font-weight: 400; }
 
   /* 바코드 스캐너 오버레이 */
@@ -474,7 +474,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.21";
+const APP_VER = "2026-08-19.22";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1239,8 +1239,12 @@ function specHtml(spec, stk) {
     const ia = SPEC_ORDER.indexOf(a), ib = SPEC_ORDER.indexOf(b);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
-  const rows = keys.map(k =>
-    `<div class="spec-row"><span class="spec-k">${esc(k)}</span><span class="spec-v${k === "제품 코드" ? " mono" : ""}">${esc(spec[k])}</span></div>`);
+  const rows = keys.map(k => {
+    // 단일 바코드 제품은 제품 코드 행 옆에 복사 버튼
+    const copyBtn = k === "제품 코드" && stk
+      ? `<button class="sbtn" onclick="copyText('${esc(stk.bc)}', '제품 코드 복사됨')">복사</button>` : "";
+    return `<div class="spec-row${copyBtn ? " coderow" : ""}"><span class="spec-k">${esc(k)}</span><span class="spec-v${k === "제품 코드" ? " mono" : ""}">${esc(spec[k])}</span>${copyBtn}</div>`;
+  });
   if (stk) {
     // 재고 행은 제품 코드 바로 아래(코드 행이 없으면 맨 위)
     rows.splice(keys.indexOf("제품 코드") + 1, 0,
@@ -1248,7 +1252,6 @@ function specHtml(spec, stk) {
         <span class="spec-k">재고</span>
         <span class="spec-v sz"><span class="stk-wait">확인 중…</span></span>
         <button class="sbtn stockbtn" data-bc="${esc(stk.bc)}" data-lb="${esc(stk.lb)}">재고</button>
-        <button class="sbtn" onclick="copyText('${esc(stk.bc)}', '바코드 복사됨')">복사</button>
       </div>`);
   }
   return `<div class="specbox" id="specbox"${rows.length ? "" : ' style="display:none"'}>${rows.join("")}</div>`;
@@ -1374,7 +1377,7 @@ async function loadMyStock(p) {
           if (wait) wait.remove();
           const n = mine ? (mine.usable_stock || 0) : null;
           sz.insertAdjacentHTML("beforeend",
-            `<div class="mystk ${n ? "" : "zero"}">자점 ${n === null ? "?" : (n ? n + "개" : "없음")}</div>`);
+            `<div class="mystk ${n ? "" : "zero"}">${esc(store.name)} ${n === null ? "?" : (n ? n + "개" : "없음")}</div>`);
         }
       } catch (e) { return; }  // 오프라인 등 — 조용히 중단(버튼으로는 재시도 가능)
     }
