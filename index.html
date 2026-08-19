@@ -506,7 +506,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.34";
+const APP_VER = "2026-08-19.35";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1176,11 +1176,14 @@ function openMujiApp(webUrl, fallback) {
   const intent = "intent://" + webUrl.replace(/^https:\/\//, "") +
     "#Intent;scheme=https;package=com.muji;S.browser_fallback_url=" +
     encodeURIComponent(fallback) + ";end";
-  const t = setTimeout(() => { if (!document.hidden) location.href = fallback; }, 1200);
-  const cancel = () => { if (document.hidden) clearTimeout(t); };
-  addEventListener("pagehide", () => clearTimeout(t), { once: true });
-  document.addEventListener("visibilitychange", cancel, { once: true });
-  try { location.href = intent; } catch (e) { clearTimeout(t); location.href = fallback; }
+  // 실기기 관찰(2026-08-19): 앱은 폴백의 https 주소 내비게이션으로 열리는 것으로 보임(1.2초 지연이 그대로 체감됨)
+  // → 대기 0.5초로 단축. 앱 전환이 시작되면(blur/visibilitychange/pagehide) 폴백 취소.
+  const t = setTimeout(() => { if (!document.hidden) location.href = fallback; }, 500);
+  const stop = () => clearTimeout(t);
+  addEventListener("pagehide", stop, { once: true });
+  addEventListener("blur", stop, { once: true });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) stop(); }, { once: true });
+  try { location.href = intent; } catch (e) { stop(); location.href = fallback; }
   return false;  // onclick에서 기본 링크 이동 억제용
 }
 
@@ -1198,7 +1201,7 @@ function renderHome() {
   // 외부 바로가기: 네이버 브랜드 스토어·공식 어플.
   // 안드로이드는 intent URL로 앱이 설치돼 있으면 바로 열고, 없으면 Play스토어로 폴백.
   const appBtn = IS_ANDROID
-    ? `<a href="${PLAY_URL}" onclick="return openMujiApp('https://mujikorea.co.kr/', '${PLAY_URL}')">📱 공식 어플 (MUJI KR)</a>`
+    ? `<a href="${PLAY_URL}" onclick="return openMujiApp('https://mujikorea.co.kr/', 'https://mujikorea.co.kr/')">📱 공식 어플 (MUJI KR)</a>`
     : `<a href="${IS_IOS ? "https://apps.apple.com/kr/app/muji-kr/id6739993593" : PLAY_URL}" target="_blank" rel="noopener">📱 공식 어플 (MUJI KR)</a>`;
   html += `<div class="sec-title">바로가기</div><div class="quicklinks">
     <a href="https://brand.naver.com/mujikorea" target="_blank" rel="noopener">🛒 네이버 스마트 스토어</a>
