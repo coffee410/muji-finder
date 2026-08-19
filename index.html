@@ -131,6 +131,7 @@
   .galg .d-imgs { margin-bottom: 0; }
   .gal-load { font-size: 11.5px; color: var(--sub); margin: 0 2px 12px; }
   .galmore { margin-bottom: 6px; }
+  .galg { scroll-margin-top: 64px; }  /* 색상 칩 연동 스크롤 시 sticky 헤더에 안 가리게 */
   .galmore > summary { font-size: 12.5px; color: var(--sub); cursor: pointer; padding: 6px 2px; }
   /* 상세 페이지 이미지(연출컷·설명·규격표) 접기 */
   .dimgs { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
@@ -492,7 +493,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.26";
+const APP_VER = "2026-08-19.27";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1363,6 +1364,13 @@ window.selColor = i => {
   if (title) title.textContent = p.colors[i].color === "단품" ? "기본" : p.colors[i].color;
   rows.innerHTML = bcRowsHtml(p, p.colors[i]);
   loadMyStock(p);
+  // 갤러리 연동 — 해당 색상 사진 그룹으로 스크롤(접혀 있으면 펼침)
+  const galg = [...document.querySelectorAll("#gal .galg")].find(el => el.dataset.color === p.colors[i].color);
+  if (galg) {
+    const det = galg.closest("details");
+    if (det) det.open = true;
+    galg.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 };
 function openDetail(id) {
   const p = PRODUCTS.find(x => x.id === id);
@@ -1557,7 +1565,7 @@ async function loadGallery(p) {
   const total = g.groups.reduce((n, x) => n + x.imgs.length, 0);
   if (total) {
     const grpHtml = (grp, gi) =>
-      `<div class="galg">${multi && grp.color ? `<div class="gall">${esc(grp.color)} · ${grp.imgs.length}장</div>` : ""}
+      `<div class="galg" data-color="${esc(grp.color)}">${multi && grp.color ? `<div class="gall">${esc(grp.color)} · ${grp.imgs.length}장</div>` : ""}
         <div class="d-imgs">${grp.imgs.map((u, i) =>
           `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" onload="this.classList.add('ld')" alt="" data-g="${gi}" data-i="${i}">`).join("")}</div>
       </div>`;
