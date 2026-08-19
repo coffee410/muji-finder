@@ -198,7 +198,7 @@
   #main.vin { animation: viewin .16s ease; }
   @media (prefers-reduced-motion: reduce) {
     #main.vin { animation: none; }
-    #detail, #detail.open, #viewer { transition: none; }
+    #detail, #detail.open, #viewer, #scanner, #scanner video { transition: none; }
   }
 
   /* 탭 */
@@ -319,10 +319,15 @@
   /* 바코드 스캐너 오버레이 */
   #scanner {
     position: fixed; inset: 0; z-index: 80; background: #000;
-    display: none; flex-direction: column;
+    display: flex; flex-direction: column;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .2s ease, visibility .2s;
   }
-  #scanner.open { display: flex; }
-  #scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #scanner.open { opacity: 1; visibility: visible; pointer-events: auto; }
+  /* 카메라가 켜지면 검은 화면에서 영상으로 부드럽게 */
+  #scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity .3s ease; }
+  #scanner video.on { opacity: 1; }
   .scan-head {
     position: relative; z-index: 3; display: flex; align-items: center; gap: 12px;
     padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
@@ -336,7 +341,11 @@
   .scan-frame {
     position: relative; z-index: 2; margin: auto; width: 74%; max-width: 320px; aspect-ratio: 1.4;
     border: 2px solid #fff; border-radius: 14px;
+    transition: border-color .15s ease, box-shadow .15s ease;
   }
+  /* 인식 성공: 프레임이 초록색으로 반짝 → 잠깐 보여준 뒤 상세로 전환 */
+  #scanner.hit .scan-frame { border-color: #4ade80; box-shadow: 0 0 18px #4ade8099; }
+  #scanner.hit .scan-frame::after { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
   .scan-frame::after { content: ""; position: absolute; left: 8px; right: 8px; top: 50%;
     height: 2px; background: var(--red); box-shadow: 0 0 8px var(--red); }
   .scan-msg {
@@ -387,7 +396,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.6";
+const APP_VER = "2026-08-19.7";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1372,6 +1381,8 @@ async function openScanner() {
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   scanReader = new ZXing.BrowserMultiFormatReader(hints);
   const video = document.getElementById("scanvideo");
+  // 첫 프레임이 나오면 검은 화면에서 영상으로 페이드인
+  video.addEventListener("loadeddata", () => video.classList.add("on"), { once: true });
   // 화질↑: 해상도를 높게 요청(카메라가 지원하는 최대에 가깝게)
   const constraints = { video: { facingMode: "environment", width: { ideal: 2560 }, height: { ideal: 1440 } } };
   document.getElementById("scanmsg").textContent = "바코드를 인식하면 자동으로 제품을 찾습니다";
@@ -1406,25 +1417,40 @@ async function tuneCameraFocus(video) {
 }
 function onScanned(code) {
   if (navigator.vibrate) navigator.vibrate(120);
-  closeScanner();
-  // 스캔한 바코드와 정확히 일치하는 제품이 있으면 바로 상세로, 없으면 번호로 검색
-  const hit = PRODUCTS.find(p => p.colors.some(c => c.sizes.some(s => s.barcode === code)));
-  if (hit) {
-    nav({ view: "product", id: hit.id });
-  } else {
-    $q.value = code;
-    $clearq.style.display = "block";
-    history.pushState({}, "", "#");
-    renderSearch(code);
-    toast("일치 제품 없음 · 번호로 검색");
-  }
+  // 인식 순간: 카메라는 멈추되(마지막 프레임 유지) 프레임을 초록색으로 반짝 보여준 뒤 이동
+  stopScanStream();
+  const sc = document.getElementById("scanner");
+  sc.classList.add("hit");
+  document.getElementById("scanmsg").textContent = "✓ 인식됨 · " + code;
+  setTimeout(() => {
+    closeScanner();
+    // 스캔한 바코드와 정확히 일치하는 제품이 있으면 바로 상세로, 없으면 번호로 검색
+    const hit = PRODUCTS.find(p => p.colors.some(c => c.sizes.some(s => s.barcode === code)));
+    if (hit) {
+      nav({ view: "product", id: hit.id });
+    } else {
+      $q.value = code;
+      $clearq.style.display = "block";
+      history.pushState({}, "", "#");
+      renderSearch(code);
+      toast("일치 제품 없음 · 번호로 검색");
+    }
+  }, 380);
 }
-function closeScanner() {
+// 카메라 스트림·디코더 정지. srcObject는 그대로 둬서 마지막 프레임이 정지화면처럼 남는다.
+function stopScanStream() {
   if (scanControls) { try { scanControls.stop(); } catch (e) {} scanControls = null; }
   if (scanReader) { try { scanReader.reset(); } catch (e) {} scanReader = null; }
   const v = document.getElementById("scanvideo");
-  if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
-  document.getElementById("scanner").classList.remove("open");
+  if (v && v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} }
+}
+function closeScanner() {
+  stopScanStream();
+  const v = document.getElementById("scanvideo");
+  if (v) { v.srcObject = null; v.classList.remove("on"); }
+  const sc = document.getElementById("scanner");
+  sc.classList.remove("open");
+  sc.classList.remove("hit");
 }
 // 앱이 백그라운드로 가거나 페이지를 떠날 때 카메라 정리
 document.addEventListener("visibilitychange", () => { if (document.hidden) closeScanner(); });
