@@ -497,7 +497,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.30";
+const APP_VER = "2026-08-19.31";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1826,14 +1826,19 @@ async function openScanner() {
   }
   if (!sc.classList.contains("open")) return;
   // 무인양품 바코드는 EAN-13(JAN). 포맷을 좁혀 인식 속도를 높인다.
+  // TRY_HARDER는 평소엔 끈다(2026-08-19 실측: 실패 프레임 처리 731ms→60ms, 12배 —
+  // 조준 중엔 대부분 실패 프레임이라 이 비용이 체감 인식률을 결정한다. 기울기 10°·저대비까지는
+  // TRY_HARDER 없이도 인식됨). 흐림(초점 안 맞음) 구제용 정밀 리더는 8틱마다 1번만 쓴다.
   const hints = new Map();
   hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
     ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
     ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.CODE_128,
   ]);
-  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  const hintsHard = new Map(hints);
+  hintsHard.set(ZXing.DecodeHintType.TRY_HARDER, true);
   // 2번째 인자 = 인식 시도 간격(ms). 기본 500ms는 반응이 굼떠서 100ms로.
   scanReader = new ZXing.BrowserMultiFormatReader(hints, 100);
+  const hardReader = new ZXing.BrowserMultiFormatReader(hintsHard, 100);
   // 콜백은 성공/실패 매 시도마다 온다 → 마지막 호출 시각으로 루프 생존을 감시
   const onResult = (result, err) => {
     scanLastTick = Date.now();
@@ -1850,7 +1855,7 @@ async function openScanner() {
       // 잘라 해독한다 — 화소가 1/3로 줄어 시도당 CPU·발열이 크게 줄고(초당 시도↑), 바코드 주변만
       // 이진화하므로 배경(선반·손)에 히스토그램이 끌려가던 문제도 사라진다. 예외를 전부 잡아
       // 루프가 조용히 죽는 일이 없어 워치독도 필요 없다.
-      startScanLoop(video, scanReader, onResult);
+      startScanLoop(video, scanReader, hardReader, onResult);
     } else if (typeof scanReader.decodeContinuously === "function") {
       // 이미 재생 중인 비디오에 인식 루프만 붙인다(srcObject 재부착 없음 → 크기 레이스 원천 차단)
       scanReader.decodeContinuously(video, onResult);
@@ -1885,12 +1890,13 @@ async function openScanner() {
   }
 }
 // 자체 크롭 해독 루프 — 화면 중앙(가로 86% × 세로 44%)만 잘라 zxing으로 해독.
-// HybridBinarizer 실패 시 GlobalHistogramBinarizer로 한 번 더(zxing 내부 decode()와 같은 2단 전략).
+// 평소엔 빠른 리더(TRY_HARDER 없음, 실패 60ms)로 자주 시도하고,
+// 8틱마다 1번 정밀 리더(TRY_HARDER + 2단 이진화)로 흐린 프레임을 구제한다.
 let scanLoopStop = null;
-function startScanLoop(video, reader, onResult) {
+function startScanLoop(video, fastReader, hardReader, onResult) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  let stopped = false;
+  let stopped = false, n = 0;
   if (scanLoopStop) scanLoopStop();  // 혹시 남아있던 이전 루프 정지(항상 1개만)
   scanLoopStop = () => { stopped = true; };
   const tick = () => {
@@ -1902,12 +1908,14 @@ function startScanLoop(video, reader, onResult) {
         const cw = Math.round(vw * 0.86), ch = Math.round(vh * 0.44);
         if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
         ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, cw, ch);
+        const hard = (++n % 8 === 0);
+        const reader = hard ? hardReader : fastReader;
         const lum = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
         let result = null;
         try {
           result = reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum)));
         } catch (e1) {
-          if (ZXing.GlobalHistogramBinarizer) {
+          if (hard && ZXing.GlobalHistogramBinarizer) {
             try { result = reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.GlobalHistogramBinarizer(lum))); } catch (e2) {}
           }
         }
