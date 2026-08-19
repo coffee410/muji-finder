@@ -506,7 +506,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.42";
+const APP_VER = "2026-08-20.43";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1783,6 +1783,13 @@ function renderStockSheet(bc, label, m, rows, q, showZero) {
   };
   inp.addEventListener("input", () => { state.q = inp.value; drawList(); });
   drawList();
+  // 목록 영역 높이를 첫 렌더(전체 매장) 크기로 고정 — 검색으로 결과 수가 확 줄어도
+  // 시트가 위아래로 출렁이지 않는다(입력 때마다 어지럽다는 피드백, 2026-08-20 수정).
+  // clientHeight 읽기가 레이아웃을 강제하므로 rAF 없이 바로 재도 된다(rAF는 백그라운드 탭에서 멈춤).
+  if (listEl.clientHeight) {
+    listEl.style.height = listEl.clientHeight + "px";
+    listEl.style.flex = "none";
+  }
 }
 function closeStock() {
   document.getElementById("stocksheet").classList.remove("open");
