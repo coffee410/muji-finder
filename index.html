@@ -446,7 +446,7 @@ async function hydrateEduImages(root, skipFolded) {
 const EDU_PW_HASH = "02f3c8e9896c0ab95e98c3fce2a3e058a23b3904b6f1ec8460f1d329835aca11";
 // 관리자 모드: 잠금(lock) 표시된 교육자료는 관리자 비밀번호를 입력한 기기에서만 수정·삭제 가능.
 // 입구는 홈 화면 footer 맨 아래의 흐린 "·" (일반 직원 눈에 잘 안 띄게). 코드엔 해시만.
-const EDU_ADMIN_HASH = "529c47297e906c6455b3e2394ad66a2ae34bf12b28e2867edc6dfb0bd3e1adb0";
+const EDU_ADMIN_HASH = "47d449f990d47fe93aba6bd4cd6ecc403a791cd6808f234fd5c5f8548536df40";
 function isAdmin() { return localStorage.getItem("eduAdmin") === "1"; }
 function renderAdminPw() {
   // 홈 footer(제품 찾기 탭)와 잠긴 문서의 🔒(교육자료 탭) 양쪽에서 들어오므로 탭 표시는 바꾸지 않는다
