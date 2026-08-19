@@ -108,6 +108,7 @@
        visibility는 duration 보간(전환 중 visible, 끝나면 hidden)으로 처리 */
     visibility: hidden; transform: translateX(100%);
     transition: transform .22s ease, visibility .22s;
+    will-change: transform; /* 슬라이드를 GPU 합성으로 처리해 끊김 방지 */
   }
   #detail.open { visibility: visible; transform: none; }
   .d-head { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line);
@@ -321,7 +322,7 @@
     position: fixed; inset: 0; z-index: 80; background: #000;
     display: flex; flex-direction: column;
     opacity: 0; visibility: hidden; pointer-events: none;
-    transition: opacity .2s ease, visibility .2s;
+    transition: opacity .25s ease, visibility .25s;
   }
   #scanner.open { opacity: 1; visibility: visible; pointer-events: auto; }
   /* 카메라가 켜지면 검은 화면에서 영상으로 부드럽게 */
@@ -396,7 +397,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.7";
+const APP_VER = "2026-08-19.8";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1178,8 +1179,16 @@ function openDetail(id) {
   }
   html += `<div class="d-cats">분류: ${p.cats.map(esc).join("<br>")}</div></div>`;
   $detail.innerHTML = html;
-  $detail.classList.add("open");
   $detail.scrollTop = 0;
+  // 내용 레이아웃이 끝난 다음 프레임에 슬라이드 시작 — 그리기와 애니메이션이 겹치면 첫 프레임이 끊긴다
+  $detail._openedAt = performance.now() + 40;
+  const openId = p.id;
+  const openIt = () => {
+    const s = history.state || {};
+    if (s.view === "product" && s.id === openId) $detail.classList.add("open");
+  };
+  requestAnimationFrame(() => requestAnimationFrame(openIt));
+  setTimeout(openIt, 90);  // rAF가 멈추는 환경(백그라운드 전환 등) 대비 안전망
   if (imgs.length) {
     // 전체 사진이 오기 전(또는 오프라인이라 못 받을 때)에도 대표 사진은 크게 볼 수 있게
     const box = document.getElementById("gal");
@@ -1228,6 +1237,9 @@ async function fetchGallery(id) {
 async function loadGallery(p) {
   let g;
   try { g = await fetchGallery(p.id); } catch (e) { return; }
+  // 슬라이드 전환이 끝난 뒤에 갤러리를 갈아끼운다(전환 중 레이아웃 변경이 끊김의 원인)
+  const wait = ($detail._openedAt || 0) + 280 - performance.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
   const box = document.getElementById("gal");
   if (!box || !$detail.classList.contains("open")) return;
   // 그리는 사이 다른 제품으로 넘어갔으면 무시
@@ -1422,8 +1434,9 @@ function onScanned(code) {
   const sc = document.getElementById("scanner");
   sc.classList.add("hit");
   document.getElementById("scanmsg").textContent = "✓ 인식됨 · " + code;
+  // 초록 프레임 잠깐 → 스캐너 뒤에서 다음 화면을 먼저 다 그린 뒤 →
+  // 스캐너만 페이드아웃해서 완성된 화면이 드러나게(전환 애니메이션 겹침 없음)
   setTimeout(() => {
-    closeScanner();
     // 스캔한 바코드와 정확히 일치하는 제품이 있으면 바로 상세로, 없으면 번호로 검색
     const hit = PRODUCTS.find(p => p.colors.some(c => c.sizes.some(s => s.barcode === code)));
     if (hit) {
@@ -1433,9 +1446,12 @@ function onScanned(code) {
       $clearq.style.display = "block";
       history.pushState({}, "", "#");
       renderSearch(code);
-      toast("일치 제품 없음 · 번호로 검색");
     }
-  }, 380);
+    setTimeout(() => {
+      closeScanner();
+      if (!hit) toast("일치 제품 없음 · 번호로 검색");
+    }, 240);
+  }, 320);
 }
 // 카메라 스트림·디코더 정지. srcObject는 그대로 둬서 마지막 프레임이 정지화면처럼 남는다.
 function stopScanStream() {
