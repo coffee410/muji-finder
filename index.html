@@ -199,7 +199,7 @@
   #main.vin { animation: viewin .16s ease; }
   @media (prefers-reduced-motion: reduce) {
     #main.vin { animation: none; }
-    #detail, #detail.open, #viewer, #scanner, #scanner video { transition: none; }
+    #detail, #detail.open, #viewer, #scanner, #scanner video, #scanresult { transition: none; }
   }
 
   /* 탭 */
@@ -354,6 +354,25 @@
     padding: 16px 24px calc(env(safe-area-inset-bottom) + 24px); line-height: 1.6;
     background: linear-gradient(#0000, #000c);
   }
+  /* 연속 스캔 결과 카드: 카메라를 끄지 않고 하단에 떠서 바로 다음 제품을 찍을 수 있다 */
+  #scanresult {
+    position: absolute; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px);
+    z-index: 4; background: #fff; color: #222; border-radius: 16px; padding: 12px;
+    box-shadow: 0 6px 24px #0006;
+    transform: translateY(140%); opacity: 0; transition: transform .25s ease, opacity .25s ease;
+  }
+  #scanresult.show { transform: none; opacity: 1; }
+  .sr-top { display: flex; gap: 10px; align-items: center; }
+  .sr-top img { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; background: #f0eeeb; }
+  .sr-tx { flex: 1; min-width: 0; }
+  .sr-nm { font-size: 14px; font-weight: 700; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .sr-sub { font-size: 12px; color: #777; margin-top: 2px; font-family: ui-monospace, Consolas, monospace; }
+  .sr-x { border: 0; background: none; font-size: 14px; padding: 6px 8px; cursor: pointer; color: #999; align-self: flex-start; }
+  .sr-btns { display: flex; gap: 8px; margin-top: 10px; }
+  .sr-btns button { flex: 1; padding: 10px; font-size: 13.5px; border: 1px solid #ddd; background: #fff;
+    border-radius: 10px; cursor: pointer; color: #222; }
+  .sr-btns button.pri { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -389,6 +408,7 @@
   <video id="scanvideo" playsinline muted></video>
   <div class="scan-mask"></div>
   <div class="scan-frame"></div>
+  <div id="scanresult"></div>
   <div class="scan-msg" id="scanmsg">바코드를 인식하면 자동으로 제품을 찾습니다</div>
 </div>
 
@@ -397,7 +417,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.11";
+const APP_VER = "2026-08-19.12";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1420,12 +1440,7 @@ async function openScanner() {
   ]);
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   scanReader = new ZXing.BrowserMultiFormatReader(hints);
-  const onResult = result => {
-    if (result && !scanHandled) {
-      const code = (result.getText() || "").trim();
-      if (/^\d{8,14}$/.test(code)) { scanHandled = true; onScanned(code); }
-    }
-  };
+  const onResult = result => { if (result) handleScanCode((result.getText() || "").trim()); };
   try {
     if (typeof scanReader.decodeFromStream === "function") {
       // 이미 켜둔 카메라 스트림에 인식기만 붙인다(카메라 재시작 없음)
@@ -1456,32 +1471,60 @@ async function tuneCameraFocus(video) {
       "바코드를 인식하면 자동으로 제품을 찾습니다" + (st.width ? " (" + st.width + "×" + st.height + ")" : "");
   } catch (e) {}
 }
-function onScanned(code) {
-  if (navigator.vibrate) navigator.vibrate(120);
-  // 인식 순간: 카메라는 멈추되(마지막 프레임 유지) 프레임을 초록색으로 반짝 보여준 뒤 이동
-  stopScanStream();
-  const sc = document.getElementById("scanner");
-  sc.classList.add("hit");
-  document.getElementById("scanmsg").textContent = "✓ 인식됨 · " + code;
-  // 초록 프레임 잠깐 → 스캐너 뒤에서 다음 화면을 먼저 다 그린 뒤 →
-  // 스캐너만 페이드아웃해서 완성된 화면이 드러나게(전환 애니메이션 겹침 없음)
-  setTimeout(() => {
-    // 스캔한 바코드와 정확히 일치하는 제품이 있으면 바로 상세로, 없으면 번호로 검색
-    const hit = PRODUCTS.find(p => p.colors.some(c => c.sizes.some(s => s.barcode === code)));
-    if (hit) {
-      nav({ view: "product", id: hit.id });
-    } else {
-      $q.value = code;
-      $clearq.style.display = "block";
-      history.pushState({}, "", "#");
-      renderSearch(code);
-    }
-    setTimeout(() => {
-      closeScanner();
-      if (!hit) toast("일치 제품 없음 · 번호로 검색");
-    }, 240);
-  }, 320);
+/* 연속 스캔: 인식해도 카메라를 끄지 않고 하단 결과 카드만 띄운다.
+   카드에서 제품명 복사·상세 보기가 되고, 그대로 다음 제품을 바로 찍을 수 있다
+   (카메라 기동 1~2초를 매번 내지 않아도 됨). */
+let lastScan = { code: null, t: 0 };
+function handleScanCode(code) {
+  if (scanHandled) return;                    // 상세/검색으로 전환 중엔 무시
+  if (!/^\d{8,14}$/.test(code)) return;
+  const now = Date.now();
+  // 같은 바코드를 계속 비추고 있을 때 카드가 반복해서 뜨지 않게 쿨다운
+  if (code === lastScan.code && now - lastScan.t < 2500) { lastScan.t = now; return; }
+  lastScan = { code, t: now };
+  onScanned(code);
 }
+function onScanned(code) {
+  if (navigator.vibrate) navigator.vibrate(80);
+  const sc = document.getElementById("scanner");
+  sc.classList.add("hit");                     // 초록 프레임 반짝
+  setTimeout(() => sc.classList.remove("hit"), 450);
+  const hit = PRODUCTS.find(p => p.colors.some(c => c.sizes.some(s => s.barcode === code)));
+  const el = document.getElementById("scanresult");
+  if (hit) {
+    const img = hit._img ? `<img src="${esc(imgUrl(hit._img, 100))}" alt="">` : "";
+    el.innerHTML = `<div class="sr-top">${img}<div class="sr-tx"><div class="sr-nm">${esc(hit.name)}</div>
+      <div class="sr-sub">${hit.price ? hit.price.toLocaleString() + "원 · " : ""}${esc(code)}</div></div>
+      <button class="sr-x" onclick="hideScanResult()">✕</button></div>
+      <div class="sr-btns"><button onclick='srCopy(${JSON.stringify(hit.id)})'>제품명 복사</button>
+      <button class="pri" onclick='srDetail(${JSON.stringify(hit.id)})'>상세 보기</button></div>`;
+  } else {
+    el.innerHTML = `<div class="sr-top"><div class="sr-tx"><div class="sr-nm">일치 제품 없음</div>
+      <div class="sr-sub">${esc(code)}</div></div>
+      <button class="sr-x" onclick="hideScanResult()">✕</button></div>
+      <div class="sr-btns"><button class="pri" onclick='srSearch(${JSON.stringify(code)})'>이 번호로 검색</button></div>`;
+  }
+  el.classList.add("show");
+}
+function hideScanResult() {
+  document.getElementById("scanresult").classList.remove("show");
+  lastScan = { code: null, t: 0 };  // 카드를 닫으면 같은 제품도 바로 다시 찍을 수 있게
+}
+window.srCopy = id => { const p = PRODUCTS.find(x => x.id === id); if (p) copyText(p.name, "제품명 복사됨"); };
+// 상세/검색으로 나갈 때: 다음 화면을 스캐너 뒤에서 먼저 그린 뒤 스캐너만 페이드아웃(크로스페이드)
+window.srDetail = id => {
+  scanHandled = true;
+  nav({ view: "product", id });
+  setTimeout(closeScanner, 240);
+};
+window.srSearch = code => {
+  scanHandled = true;
+  $q.value = code;
+  $clearq.style.display = "block";
+  history.pushState({}, "", "#");
+  renderSearch(code);
+  setTimeout(closeScanner, 240);
+};
 // 카메라 스트림·디코더 정지. srcObject는 그대로 둬서 마지막 프레임이 정지화면처럼 남는다.
 function stopScanStream() {
   if (scanControls) { try { scanControls.stop(); } catch (e) {} scanControls = null; }
@@ -1496,6 +1539,7 @@ function closeScanner() {
   const sc = document.getElementById("scanner");
   sc.classList.remove("open");
   sc.classList.remove("hit");
+  hideScanResult();
 }
 // 앱이 백그라운드로 가거나 페이지를 떠날 때 카메라 정리
 document.addEventListener("visibilitychange", () => { if (document.hidden) closeScanner(); });
