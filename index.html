@@ -497,7 +497,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.29";
+const APP_VER = "2026-08-19.30";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1464,11 +1464,14 @@ async function loadMyStock(p) {
   const store = myStore();
   let g = null;
   try { g = await fetchGallery(p.id); } catch (e) {}
-  // .bcrow(색상·사이즈 블록)와 .stkrow(스펙 표의 재고 행) 둘 다 채운다
-  const rows = [...$detail.querySelectorAll(".bcrow[data-bc], .stkrow[data-bc]")];
+  // .bcrow(색상·사이즈 블록)와 .stkrow(스펙 표의 재고 행) 둘 다 채운다.
+  // 주의: 행 요소를 미리 붙잡아두면 안 된다 — 병렬로 도는 applyInfo가 스펙 표를 다시 그리면
+  // 붙잡아둔 옛(분리된) 요소에 채우게 되고, 화면의 새 요소는 "확인 중…"으로 남아
+  // 마지막 정리에서 "확인 불가"가 됐다(2026-08-19 수정). 채우는 시점에 바코드로 다시 찾는다.
+  const bcs = [...$detail.querySelectorAll(".bcrow[data-bc], .stkrow[data-bc]")].map(el => el.dataset.bc);
   if (g && g.optMap) {
-    await Promise.all(rows.map(async (rowEl, i) => {
-      const m = g.optMap[rowEl.dataset.bc];
+    await Promise.all(bcs.map(async (bc, i) => {
+      const m = g.optMap[bc];
       if (!m) return;
       if (i && !STOCK_CACHE[m.oid]) await new Promise(r => setTimeout(r, i * 100));  // 스태거
       try {
@@ -1477,7 +1480,8 @@ async function loadMyStock(p) {
         if (run !== stockRun || (history.state || {}).id !== p.id) return;
         // 미리 그려둔 고정 높이 자리(.mystk.wait)의 내용만 바꾼다 — 행 높이가 안 변해 화면이 안 밀린다
         const mine = list.find(r => r.id === store.id);
-        const slot = rowEl.querySelector(".sz .mystk");
+        const rowEl = $detail.querySelector(`.bcrow[data-bc="${bc}"], .stkrow[data-bc="${bc}"]`);
+        const slot = rowEl && rowEl.querySelector(".sz .mystk");
         if (slot && slot.classList.contains("wait")) {
           const n = mine ? (mine.usable_stock || 0) : null;
           slot.textContent = `${store.name} ${n === null ? "?" : (n ? n + "개" : "없음")}`;
@@ -1841,7 +1845,13 @@ async function openScanner() {
     if (!video.videoWidth) {
       await new Promise(res => { video.addEventListener("loadedmetadata", res, { once: true }); setTimeout(res, 1500); });
     }
-    if (typeof scanReader.decodeContinuously === "function") {
+    if (ZXing.HTMLCanvasElementLuminanceSource && ZXing.BinaryBitmap && ZXing.HybridBinarizer) {
+      // 자체 크롭 해독 루프(2026-08-19 인식률 개선): 전체 프레임 대신 화면 중앙(스캔 프레임 주변)만
+      // 잘라 해독한다 — 화소가 1/3로 줄어 시도당 CPU·발열이 크게 줄고(초당 시도↑), 바코드 주변만
+      // 이진화하므로 배경(선반·손)에 히스토그램이 끌려가던 문제도 사라진다. 예외를 전부 잡아
+      // 루프가 조용히 죽는 일이 없어 워치독도 필요 없다.
+      startScanLoop(video, scanReader, onResult);
+    } else if (typeof scanReader.decodeContinuously === "function") {
       // 이미 재생 중인 비디오에 인식 루프만 붙인다(srcObject 재부착 없음 → 크기 레이스 원천 차단)
       scanReader.decodeContinuously(video, onResult);
       // 워치독: zxing은 예상 밖 예외가 한 번 나면 루프를 조용히 멈춘다 → 3초간 신호 없으면 재시작.
@@ -1873,6 +1883,40 @@ async function openScanner() {
     closeScanner();
     toast("카메라를 열 수 없습니다");
   }
+}
+// 자체 크롭 해독 루프 — 화면 중앙(가로 86% × 세로 44%)만 잘라 zxing으로 해독.
+// HybridBinarizer 실패 시 GlobalHistogramBinarizer로 한 번 더(zxing 내부 decode()와 같은 2단 전략).
+let scanLoopStop = null;
+function startScanLoop(video, reader, onResult) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  let stopped = false;
+  if (scanLoopStop) scanLoopStop();  // 혹시 남아있던 이전 루프 정지(항상 1개만)
+  scanLoopStop = () => { stopped = true; };
+  const tick = () => {
+    if (stopped) return;
+    scanLastTick = Date.now();
+    if (video.videoWidth && video.readyState >= 2 && !document.hidden) {
+      try {
+        const vw = video.videoWidth, vh = video.videoHeight;
+        const cw = Math.round(vw * 0.86), ch = Math.round(vh * 0.44);
+        if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+        ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, cw, ch);
+        const lum = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+        let result = null;
+        try {
+          result = reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum)));
+        } catch (e1) {
+          if (ZXing.GlobalHistogramBinarizer) {
+            try { result = reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.GlobalHistogramBinarizer(lum))); } catch (e2) {}
+          }
+        }
+        if (result) onResult(result, null);
+      } catch (e) {}  // drawImage 실패 등 — 다음 틱에서 재시도
+    }
+    setTimeout(tick, 90);
+  };
+  tick();
 }
 // 카메라 트랙에 연속 자동초점을 적용해 근접 바코드가 또렷하게 잡히도록 한다(지원 기기 한정)
 async function tuneCameraFocus(video) {
@@ -1982,6 +2026,7 @@ window.srSearch = code => {
 // 카메라 스트림·디코더 정지. srcObject는 그대로 둬서 마지막 프레임이 정지화면처럼 남는다.
 function stopScanStream() {
   clearInterval(scanWatch); scanWatch = null;
+  if (scanLoopStop) { scanLoopStop(); scanLoopStop = null; }
   if (scanControls) { try { scanControls.stop(); } catch (e) {} scanControls = null; }
   if (scanReader) {
     try { if (scanReader.stopContinuousDecode) scanReader.stopContinuousDecode(); } catch (e) {}
