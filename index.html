@@ -322,6 +322,40 @@
   }
   #scanbtn:active { background: var(--bg); }
 
+  /* 매장 재고 바텀시트 */
+  #stocksheet { position: fixed; inset: 0; z-index: 85; background: rgba(0,0,0,.45);
+    opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+  #stocksheet.open { opacity: 1; pointer-events: auto; }
+  #stocksheet .ss-panel { position: absolute; left: 0; right: 0; bottom: 0; max-width: 640px; margin: 0 auto;
+    background: var(--bg); border-radius: 18px 18px 0 0; max-height: 80vh;
+    display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom);
+    transform: translateY(100%); transition: transform .25s ease; }
+  #stocksheet.open .ss-panel { transform: none; }
+  .ss-head { padding: 14px 16px 6px; }
+  .ss-title { font-size: 15px; font-weight: 700; }
+  .ss-sub { font-size: 12px; color: var(--sub); margin-top: 3px;
+    font-family: ui-monospace, Consolas, monospace; }
+  .ss-my { margin: 8px 16px 4px; padding: 10px 12px; background: var(--card);
+    border: 1.5px solid var(--red); border-radius: 12px; font-size: 13.5px;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .ss-my b.q { font-size: 15px; }
+  .ss-online { font-size: 12px; color: var(--sub); margin: 4px 18px 6px; }
+  .ss-search { margin: 4px 16px 8px; }
+  .ss-search input { width: 100%; font-size: 14px; padding: 9px 12px; border: 1.5px solid var(--line);
+    border-radius: 10px; background: var(--card); color: var(--ink); outline: none; -webkit-appearance: none; }
+  .ss-list { overflow-y: auto; flex: 1; padding: 0 12px 14px; }
+  .ss-row { display: flex; align-items: center; gap: 8px; padding: 10px 6px;
+    border-top: 1px dashed var(--line); font-size: 13.5px; }
+  .ss-row .n { flex: 1; min-width: 0; }
+  .ss-row .q { font-weight: 700; white-space: nowrap; }
+  .ss-row .q.zero { color: var(--sub); font-weight: 400; }
+  .ss-row .star { border: 0; background: none; font-size: 16px; cursor: pointer; opacity: .55; padding: 2px 6px; }
+  .ss-more { width: 100%; margin-top: 8px; padding: 10px; font-size: 13px; border: 1px solid var(--line);
+    background: var(--card); border-radius: 10px; cursor: pointer; color: var(--sub); }
+  .ss-load { padding: 34px 16px; text-align: center; color: var(--sub); font-size: 13px; }
+  .ss-hint { font-size: 11.5px; color: var(--sub); margin: 2px 18px 8px; }
+  .bcrow .stockbtn { color: var(--red); }
+
   /* 바코드 스캐너 오버레이 */
   #scanner {
     position: fixed; inset: 0; z-index: 80; background: #000;
@@ -404,6 +438,7 @@
 
 <div id="detail"></div>
 <div id="viewer"><div class="vstrip"></div><button class="vclose" onclick="history.back()">✕</button><div class="vcnt"></div></div>
+<div id="stocksheet"><div class="ss-panel"></div></div>
 
 <div id="scanner">
   <div class="scan-head">
@@ -422,7 +457,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.17";
+const APP_VER = "2026-08-19.18";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -685,10 +720,14 @@ window.addEventListener("popstate", route);
 function nav(state) { history.pushState(state, "", "#"); route(); }
 function route() {
   const s = history.state || {};
-  // 사진 크게 보기가 열려 있으면 뒤로가기는 그것만 닫는다(상세 화면은 그대로 유지)
+  // 사진 크게 보기·재고 시트가 열려 있으면 뒤로가기는 그것만 닫는다(상세 화면은 그대로 유지)
   if (VIEWER_OPEN) {
     closeViewer();
     if (!s.viewer && s.view === "product" && $detail.classList.contains("open")) return;
+  }
+  if (STOCK_OPEN) {
+    closeStock();
+    if (!s.stock && s.view === "product" && $detail.classList.contains("open")) return;
   }
   closeDetail();
   // 본문 화면이 바뀔 때 짧은 페이드 전환(제품 상세는 오버레이가 자체 슬라이드)
@@ -1202,9 +1241,11 @@ function openDetail(id) {
     for (const s of c.sizes) {
       const szLabel = s.size ? esc(s.size) : "단일";
       const st = s.state === "SOLDOUT" ? '<div class="st">품절</div>' : "";
+      const stockLb = esc((c.color && c.color !== "단품" ? c.color + " · " : "") + (s.size || "단일"));
       html += `<div class="bcrow">
         <div class="sz">${szLabel}${st}</div>
         <div class="bc">${esc(s.barcode)}</div>
+        ${p.storeOnly ? "" : `<button class="stockbtn" data-bc="${esc(s.barcode)}" data-lb="${stockLb}">재고</button>`}
         <button onclick="copyText('${esc(s.barcode)}', '바코드 복사됨')">복사</button>
       </div>`;
     }
@@ -1264,7 +1305,17 @@ async function fetchGallery(id) {
     const t = uniqUrls(prod.thumbnail_list);
     if (t.length) groups.push({ color: "", imgs: t });
   }
-  GAL_CACHE[id] = { groups, detail: uniqUrls(prod.detail_images) };
+  // 바코드 → 옵션ID·재고 매핑(매장 재고 조회용). 색상형·단품형 구조가 달라 재귀로 수집.
+  const optMap = {};
+  (function scan(node) {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { node.forEach(scan); return; }
+    if (node.option_barcode && node.product_option_id) {
+      optMap[node.option_barcode] = { oid: node.product_option_id, stock: node.stock, dc: node.muji_dc_stock };
+    }
+    for (const k in node) scan(node[k]);
+  })(opts);
+  GAL_CACHE[id] = { groups, detail: uniqUrls(prod.detail_images), optMap };
   return GAL_CACHE[id];
 }
 async function loadGallery(p) {
@@ -1340,6 +1391,100 @@ function closeViewer() {
   v.querySelector(".vstrip").innerHTML = "";
   VIEWER_OPEN = false;
 }
+
+/* ---------- 매장 재고 (stores?product_option_id API) ----------
+   상세의 바코드 행 "재고" 버튼 → 바텀시트에 전 매장(50곳) 재고 표시.
+   내 매장(★, localStorage)은 맨 위에 강조. 옵션ID는 갤러리 fetch 응답에서 매핑. */
+let STOCK_OPEN = false;
+const STOCK_CACHE = {};  // optionId → 매장 rows (세션 캐시)
+function myStore() {
+  try { return JSON.parse(localStorage.getItem("myStore") || "null"); } catch (e) { return null; }
+}
+function setMyStore(id, name) {
+  localStorage.setItem("myStore", JSON.stringify({ id, name }));
+  toast("내 매장: " + name);
+  if (window.__stockArgs) renderStockSheet(...window.__stockArgs);  // 재렌더
+}
+// 상세 화면의 "재고" 버튼(위임 — 상세는 innerHTML로 매번 갈리므로)
+$detail.addEventListener("click", ev => {
+  const b = ev.target.closest(".stockbtn");
+  if (b) openStock(b.dataset.bc, b.dataset.lb);
+});
+async function openStock(bc, label) {
+  const pid = (history.state || {}).id;
+  STOCK_OPEN = true;
+  const sheet = document.getElementById("stocksheet");
+  sheet.querySelector(".ss-panel").innerHTML =
+    `<div class="ss-head"><div class="ss-title">매장 재고 · ${esc(label || "")}</div>
+     <div class="ss-sub">${esc(bc)}</div></div><div class="ss-load">재고 확인 중…</div>`;
+  sheet.classList.add("open");
+  history.pushState(Object.assign({}, history.state || {}, { stock: true }), "", "#");
+  try {
+    let g = GAL_CACHE[pid];
+    if (!g || !g.optMap) g = await fetchGallery(pid);
+    const m = g.optMap && g.optMap[bc];
+    if (!m) throw new Error("옵션 정보 없음");
+    if (!STOCK_CACHE[m.oid]) {
+      const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(m.oid)}&page=1`,
+        { headers: { Accept: "application/json" } });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      STOCK_CACHE[m.oid] = (((await res.json()).data || {}).rows || []);
+    }
+    if (!STOCK_OPEN) return;  // 기다리는 사이 닫은 경우
+    window.__stockArgs = [bc, label, m, STOCK_CACHE[m.oid]];
+    renderStockSheet(bc, label, m, STOCK_CACHE[m.oid]);
+  } catch (e) {
+    if (!STOCK_OPEN) return;
+    sheet.querySelector(".ss-panel").innerHTML =
+      `<div class="ss-head"><div class="ss-title">매장 재고 · ${esc(label || "")}</div></div>
+       <div class="ss-load">재고를 불러오지 못했습니다.<br>인터넷 연결을 확인해 주세요.</div>`;
+  }
+}
+function renderStockSheet(bc, label, m, rows, q, showZero) {
+  const sheet = document.getElementById("stocksheet");
+  const my = myStore();
+  const nq = norm(q || "");
+  const sorted = [...rows].sort((a, b) => (b.usable_stock || 0) - (a.usable_stock || 0) || String(a.store_name).localeCompare(b.store_name, "ko"));
+  const list = nq ? sorted.filter(r => norm(r.store_name).includes(nq)) : sorted;
+  const has = list.filter(r => (r.usable_stock || 0) > 0);
+  const zero = list.filter(r => !(r.usable_stock || 0));
+  const myRow = my && rows.find(r => r.id === my.id);
+  const row = (r, star) => `<div class="ss-row"><span class="n">${esc(r.store_name)}</span>
+    <span class="q ${r.usable_stock ? "" : "zero"}">${r.usable_stock ? r.usable_stock + "개" : "없음"}</span>
+    ${star ? `<button class="star" data-sid="${r.id}" data-sname="${esc(r.store_name)}" title="내 매장으로 설정">☆</button>` : ""}</div>`;
+  let html = `<div class="ss-head"><div class="ss-title">매장 재고 · ${esc(label || "")}</div>
+    <div class="ss-sub">${esc(bc)}</div></div>`;
+  html += myRow
+    ? `<div class="ss-my"><span>★ ${esc(myRow.store_name)}</span><b class="q">${myRow.usable_stock ? myRow.usable_stock + "개" : "재고 없음"}</b></div>`
+    : `<div class="ss-hint">☆를 누르면 우리 매장으로 저장되어 다음부터 맨 위에 표시됩니다.</div>`;
+  html += `<div class="ss-online">온라인몰 ${m.stock ?? "?"}개 · 물류센터 ${m.dc ?? "?"}개 · 매장 재고는 실시간 변동될 수 있음</div>`;
+  html += `<div class="ss-search"><input id="ssq" type="search" placeholder="매장 검색" autocomplete="off" value="${esc(q || "")}"></div>`;
+  html += `<div class="ss-list">`;
+  html += has.map(r => row(r, true)).join("") || (nq ? "" : '<div class="ss-load">재고 보유 매장이 없습니다</div>');
+  if (zero.length) {
+    html += (showZero || nq)
+      ? zero.map(r => row(r, true)).join("")
+      : `<button class="ss-more" id="ssZero">재고 없는 매장 ${zero.length}곳 보기</button>`;
+  }
+  html += `</div>`;
+  const panel = sheet.querySelector(".ss-panel");
+  panel.innerHTML = html;
+  const inp = panel.querySelector("#ssq");
+  inp.addEventListener("input", () => renderStockSheet(bc, label, m, rows, inp.value, showZero));
+  const zbtn = panel.querySelector("#ssZero");
+  if (zbtn) zbtn.addEventListener("click", () => renderStockSheet(bc, label, m, rows, inp.value, true));
+  panel.querySelectorAll(".star").forEach(b =>
+    b.addEventListener("click", () => setMyStore(Number(b.dataset.sid), b.dataset.sname)));
+}
+function closeStock() {
+  document.getElementById("stocksheet").classList.remove("open");
+  STOCK_OPEN = false;
+  window.__stockArgs = null;
+}
+// 시트 바깥(어두운 배경) 탭 → 닫기
+document.getElementById("stocksheet").addEventListener("click", ev => {
+  if (ev.target.id === "stocksheet") history.back();
+});
 // 교육자료의 [이름](p:바코드) 링크 → 그 바코드를 가진 제품 상세를 연다
 // 이동 전에 보던 문서의 접기·스크롤 상태를 저장해, 뒤로가기로 돌아오면 그대로 복원한다
 const DOC_VIEW = {};
