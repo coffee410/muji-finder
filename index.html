@@ -456,7 +456,7 @@
   </nav>
   <div class="searchrow" id="searchrow">
     <div class="searchwrap">
-      <input id="q" type="search" placeholder="제품명, 초성(ㅍㄹㅍㄹㅍㄹ), 바코드 숫자" autocomplete="off">
+      <input id="q" type="search" placeholder="제품명, 초성, 바코드, 수입 품번" autocomplete="off">
       <button id="clearq" aria-label="지우기">✕</button>
     </div>
     <button id="scanbtn" onclick="openScanner()" aria-label="바코드 스캔">📷</button>
@@ -487,7 +487,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.24";
+const APP_VER = "2026-08-19.25";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -710,6 +710,7 @@ function init(db, extra) {
       _n: norm(p.name),
       _c: chosung(norm(p.name)),
       _b: barcodes.join(" "),
+      _k: ((p.spec || {})["제품 코드"] || "").toLowerCase(),  // 제품 코드·수입 품번(예: AC24HA6A) 검색용
       _img: firstImg(p),
     };
   });
@@ -1131,7 +1132,11 @@ function doSearch(qRaw) {
       let idx;
       if (/^\d{4,}$/.test(t)) idx = p._b.indexOf(t);
       else if (isChosungQuery(t)) idx = p._c.indexOf(t);
-      else idx = p._n.indexOf(t);
+      else if (/^[a-z0-9]{4,}$/.test(t) && /[a-z]/.test(t) && /\d/.test(t)) {
+        // 영문+숫자 조합 → 수입 품번/제품 코드 우선, 없으면 제품명
+        idx = p._k.indexOf(t);
+        if (idx < 0) idx = p._n.indexOf(t);
+      } else idx = p._n.indexOf(t);
       if (idx < 0) { ok = false; break; }
       score += idx;
     }
@@ -1193,12 +1198,38 @@ function renderSearch(qRaw) {
   if (qRaw !== lastQuery) { searchLimit = 60; lastQuery = qRaw; }
   const items = doSearch(qRaw);
   let html = `<div class="rescount">"${esc(qRaw.trim())}" 검색결과 ${items.length}개</div>`;
+  const q = qRaw.trim();
+  const codeLike = /^[A-Za-z0-9]{6,}$/.test(q) && /[A-Za-z]/.test(q) && /\d/.test(q);
   if (!items.length) {
-    html += '<div class="empty">검색 결과가 없습니다.<br>단어를 줄여서 검색해 보세요. (예: "의류케이스" → "케이스")<br>온라인몰에 없는 매장 전용 상품일 수도 있습니다.</div>';
+    if (codeLike) {
+      html += '<div class="empty" id="codewait">수입 품번으로 온라인몰 검색 중…</div>';
+      searchCodeOnline(qRaw);
+    } else {
+      html += '<div class="empty">검색 결과가 없습니다.<br>단어를 줄여서 검색해 보세요. (예: "의류케이스" → "케이스")<br>온라인몰에 없는 매장 전용 상품일 수도 있습니다.</div>';
+    }
   } else {
     html += grid(items, searchLimit, "renderSearchMore()");
   }
   $main.innerHTML = html;
+}
+// 수입 품번(예: AC24HA6A)이 로컬 데이터에 없을 때 온라인몰 키워드 검색으로 보충
+// (search_keyword가 품번 검색을 지원함 — 데이터 갱신 전 제품도 찾아진다)
+async function searchCodeOnline(qRaw) {
+  let hits = [];
+  try {
+    const res = await fetch(`${MUJI_API}/products/search/list?display_size=20&exclude_soldout=0&page=1&search_keyword=${encodeURIComponent(qRaw.trim())}`,
+      { headers: { Accept: "application/json" } });
+    const rows = (((await res.json()).data || {}).rows || []);
+    hits = rows.map(r => PRODUCTS.find(p => p.id === r.product_id)).filter(Boolean);
+  } catch (e) { /* 오프라인 등 — 아래에서 기본 문구로 대체 */ }
+  // 기다리는 사이 검색어가 바뀌었으면 무시
+  if (qRaw !== lastQuery || !document.getElementById("codewait")) return;
+  if (hits.length) {
+    $main.innerHTML = `<div class="rescount">"${esc(qRaw.trim())}" 수입 품번 검색결과 ${hits.length}개</div>` + grid(hits, 60);
+  } else {
+    document.getElementById("codewait").innerHTML =
+      '검색 결과가 없습니다.<br>품번 철자를 확인해 보세요. 온라인몰에 없는 매장 전용 상품일 수도 있습니다.';
+  }
 }
 window.renderSearchMore = () => {
   appendMore(doSearch(lastQuery), searchLimit, searchLimit + 60);
@@ -1253,10 +1284,13 @@ function specHtml(spec, stk) {
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
   const rows = keys.map(k => {
-    // 단일 바코드 제품은 제품 코드 행 옆에 복사 버튼
-    const copyBtn = k === "제품 코드" && stk
-      ? `<button class="sbtn" onclick="copyText('${esc(stk.bc)}', '제품 코드 복사됨')">복사</button>` : "";
-    return `<div class="spec-row${copyBtn ? " coderow" : ""}"><span class="spec-k">${esc(k)}</span><span class="spec-v${k === "제품 코드" ? " mono" : ""}">${esc(spec[k])}</span>${copyBtn}</div>`;
+    let label = k, copyBtn = "";
+    if (k === "제품 코드") {
+      // 영문이 섞인 코드(의류 등)는 수입 품번 — 인트라넷/발주에서 쓰는 명칭
+      if (/[A-Za-z]/.test(spec[k])) label = "수입 품번";
+      copyBtn = `<button class="sbtn" onclick="copyText('${esc(spec[k])}', '${label} 복사됨')">복사</button>`;
+    }
+    return `<div class="spec-row${copyBtn ? " coderow" : ""}"><span class="spec-k">${esc(label)}</span><span class="spec-v${k === "제품 코드" ? " mono" : ""}">${esc(spec[k])}</span>${copyBtn}</div>`;
   });
   if (stk) {
     // 재고 행은 제품 코드 바로 아래(코드 행이 없으면 맨 위)
