@@ -497,7 +497,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.28";
+const APP_VER = "2026-08-19.29";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1844,13 +1844,20 @@ async function openScanner() {
     if (typeof scanReader.decodeContinuously === "function") {
       // 이미 재생 중인 비디오에 인식 루프만 붙인다(srcObject 재부착 없음 → 크기 레이스 원천 차단)
       scanReader.decodeContinuously(video, onResult);
-      // 워치독: zxing은 예상 밖 예외가 한 번 나면 루프를 조용히 멈춘다 → 3초간 신호 없으면 재시작
+      // 워치독: zxing은 예상 밖 예외가 한 번 나면 루프를 조용히 멈춘다 → 3초간 신호 없으면 재시작.
+      // 주의: 같은 리더에 decodeContinuously를 다시 부르면 stop 플래그가 지워져, 죽지 않고
+      // 느려졌을 뿐인 옛 루프가 계속 살아남아 "이중 루프"가 된다(CPU 2배 → 인식 더 느려짐 악순환).
+      // → 옛 리더는 stop만 걸어 버리고, 매번 새 리더 인스턴스로 재부착한다.
       scanLastTick = Date.now();
       clearInterval(scanWatch);
       scanWatch = setInterval(() => {
-        if (!scanReader) return;
+        if (!scanReader || !sc.classList.contains("open")) return;
         if (Date.now() - scanLastTick > 3000) {
-          try { scanReader.decodeContinuously(video, onResult); } catch (e) {}
+          try { if (scanReader.stopContinuousDecode) scanReader.stopContinuousDecode(); } catch (e) {}
+          try {
+            scanReader = new ZXing.BrowserMultiFormatReader(hints, 100);
+            scanReader.decodeContinuously(video, onResult);
+          } catch (e) {}
           scanLastTick = Date.now();
         }
       }, 1500);
@@ -1886,14 +1893,26 @@ async function tuneCameraFocus(video) {
 /* 연속 스캔: 인식해도 카메라를 끄지 않고 하단 결과 카드만 띄운다.
    카드에서 제품명 복사·상세 보기가 되고, 그대로 다음 제품을 바로 찍을 수 있다
    (카메라 기동 1~2초를 매번 내지 않아도 됨). */
-let lastScan = { code: null, t: 0 };
+let lastScan = { code: null, t: 0, flash: 0 };
 function handleScanCode(code) {
   if (scanHandled) return;                    // 상세/검색으로 전환 중엔 무시
   if (!/^\d{8,14}$/.test(code)) return;
   const now = Date.now();
-  // 같은 바코드를 계속 비추고 있을 때 카드가 반복해서 뜨지 않게 쿨다운
-  if (code === lastScan.code && now - lastScan.t < 2500) { lastScan.t = now; return; }
-  lastScan = { code, t: now };
+  // 같은 바코드를 계속 비추고 있을 때: 카드가 이미 떠 있으면 재표시만 억제하고,
+  // "인식은 되고 있다"는 표시로 프레임을 가끔 반짝인다. 카드가 닫혀 있으면 다시 보여준다
+  // (예전엔 카드가 없어도 2.5초간 무반응이라 인식이 안 되는 것처럼 느껴졌음).
+  if (code === lastScan.code && now - lastScan.t < 2500 &&
+      document.getElementById("scanresult").classList.contains("show")) {
+    lastScan.t = now;
+    if (now - lastScan.flash > 1200) {
+      lastScan.flash = now;
+      const sc = document.getElementById("scanner");
+      sc.classList.add("hit");
+      setTimeout(() => sc.classList.remove("hit"), 300);
+    }
+    return;
+  }
+  lastScan = { code, t: now, flash: now };
   onScanned(code);
 }
 function onScanned(code) {
@@ -1923,7 +1942,7 @@ function onScanned(code) {
 }
 function hideScanResult() {
   document.getElementById("scanresult").classList.remove("show");
-  lastScan = { code: null, t: 0 };  // 카드를 닫으면 같은 제품도 바로 다시 찍을 수 있게
+  lastScan = { code: null, t: 0, flash: 0 };  // 카드를 닫으면 같은 제품도 바로 다시 찍을 수 있게
 }
 window.srCopy = id => { const p = PRODUCTS.find(x => x.id === id); if (p) copyText(p.name, "제품명 복사됨"); };
 // 스캔 결과 카드의 자점 재고 — 스캔한 바코드(=해당 색상·사이즈 옵션)의 내 매장 수량
