@@ -164,6 +164,18 @@
   .colorblock { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
   .colorblock .ctitle { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
   .colorblock .ctitle img { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; border: 1px solid var(--line); }
+  /* 색상 칩 선택(색상 여러 개인 제품 — 선택한 색상의 사이즈만 아래에 표시) */
+  .cchips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px; -webkit-overflow-scrolling: touch; }
+  .cchips button {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    border: 1px solid var(--line); background: var(--card); border-radius: 10px;
+    padding: 7px 9px; min-width: 62px; cursor: pointer;
+    font-size: 11.5px; color: var(--ink); flex-shrink: 0; word-break: keep-all;
+  }
+  .cchips button img { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; border: 1px solid var(--line); pointer-events: none; }
+  .cchips button span { pointer-events: none; max-width: 96px; }
+  .cchips button.on { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); font-weight: 700; }
+  .cchips .cso { font-size: 10px; color: #b0473a; }
   .bcrow {
     display: flex; align-items: center; justify-content: space-between;
     padding: 9px 2px; border-top: 1px dashed var(--line); gap: 8px;
@@ -474,7 +486,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.22";
+const APP_VER = "2026-08-19.23";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1269,7 +1281,11 @@ function applyInfo(p, info) {
   if (info.maker) merged["제조년월"] = info.maker;
   if (info.content) merged["설명"] = info.content;
   if (Object.keys(merged).length || stk) {
+    // 재고 칸은 loadMyStock이 병렬로 먼저 채웠을 수 있어 다시 그린 표에 상태를 옮겨 심는다
+    const oldSz = box.querySelector(".stkrow .sz");
     box.outerHTML = specHtml(merged, stk);
+    const newSz = document.querySelector("#specbox .stkrow .sz");
+    if (oldSz && newSz) newSz.innerHTML = oldSz.innerHTML;
   }
   if (info.notice && !$detail.querySelector(".pnotice")) {
     const d = document.createElement("details");
@@ -1278,6 +1294,34 @@ function applyInfo(p, info) {
     document.getElementById("specbox").insertAdjacentElement("afterend", d);
   }
 }
+// 색상 하나의 사이즈·바코드 행들
+function bcRowsHtml(p, c) {
+  if (!c.sizes.length) return '<div class="warn" style="margin:0">바코드 정보 없음</div>';
+  let h = "";
+  for (const s of c.sizes) {
+    // "XXX"·"FREE"는 API의 "사이즈 없음" 표시자 — 그대로 노출하면 깨진 글자처럼 보인다
+    const rawSz = (s.size === "XXX" || s.size === "FREE") ? "" : s.size;
+    const szLabel = rawSz ? esc(rawSz) : "단일";
+    const st = s.state === "SOLDOUT" ? '<div class="st">품절</div>' : "";
+    const stockLb = esc((c.color && c.color !== "단품" ? c.color + " · " : "") + (rawSz || "단일"));
+    h += `<div class="bcrow" data-bc="${esc(s.barcode)}">
+      <div class="sz">${szLabel}${st}</div>
+      <div class="bc">${esc(s.barcode)}</div>
+      ${p.storeOnly ? "" : `<button class="stockbtn" data-bc="${esc(s.barcode)}" data-lb="${stockLb}">재고</button>`}
+      <button onclick="copyText('${esc(s.barcode)}', '바코드 복사됨')">복사</button>
+    </div>`;
+  }
+  return h;
+}
+// 색상 칩 선택 — 해당 색상의 사이즈 행으로 교체하고 그 행들의 자점 재고를 불러온다
+window.selColor = i => {
+  const p = PRODUCTS.find(x => x.id === (history.state || {}).id);
+  const rows = document.getElementById("sizerows");
+  if (!p || !rows || !p.colors[i]) return;
+  document.querySelectorAll("#cchips > button").forEach((b, j) => b.classList.toggle("on", j === i));
+  rows.innerHTML = bcRowsHtml(p, p.colors[i]);
+  loadMyStock(p);
+};
 function openDetail(id) {
   const p = PRODUCTS.find(x => x.id === id);
   if (!p) { renderHome(); return; }
@@ -1303,25 +1347,23 @@ function openDetail(id) {
   html += specHtml(spec, stk);
   html += `<div class="warn">⚠ 인트라넷 제품명 검색은 띄어쓰기가 정확해야 합니다. 위 이름을 그대로 복사해서 쓰세요.</div>`;
 
-  if (!stk) for (const c of p.colors) {
-    const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
-    const title = c.color && c.color !== "단품" ? esc(c.color) : "기본";
-    html += `<div class="colorblock"><div class="ctitle">${chip}${title}</div>`;
-    if (!c.sizes.length) html += '<div class="warn" style="margin:0">바코드 정보 없음</div>';
-    for (const s of c.sizes) {
-      // "XXX"·"FREE"는 API의 "사이즈 없음" 표시자 — 그대로 노출하면 깨진 글자처럼 보인다
-      const rawSz = (s.size === "XXX" || s.size === "FREE") ? "" : s.size;
-      const szLabel = rawSz ? esc(rawSz) : "단일";
-      const st = s.state === "SOLDOUT" ? '<div class="st">품절</div>' : "";
-      const stockLb = esc((c.color && c.color !== "단품" ? c.color + " · " : "") + (rawSz || "단일"));
-      html += `<div class="bcrow" data-bc="${esc(s.barcode)}">
-        <div class="sz">${szLabel}${st}</div>
-        <div class="bc">${esc(s.barcode)}</div>
-        ${p.storeOnly ? "" : `<button class="stockbtn" data-bc="${esc(s.barcode)}" data-lb="${stockLb}">재고</button>`}
-        <button onclick="copyText('${esc(s.barcode)}', '바코드 복사됨')">복사</button>
-      </div>`;
+  if (!stk) {
+    if (p.colors.length > 1) {
+      // 색상이 여러 개(의류 등): 블록을 다 쌓지 않고 색상 칩으로 골라 보게 한다
+      html += `<div class="colorblock"><div class="cchips" id="cchips">` +
+        p.colors.map((c, i) => {
+          const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
+          const so = c.sizes.length && c.sizes.every(s => s.state === "SOLDOUT");
+          return `<button class="${i === 0 ? "on" : ""}" onclick="selColor(${i})">${chip}<span>${esc(c.color === "단품" ? "기본" : c.color)}</span>${so ? '<span class="cso">품절</span>' : ""}</button>`;
+        }).join("") +
+        `</div><div id="sizerows">${bcRowsHtml(p, p.colors[0])}</div></div>`;
+    } else {
+      for (const c of p.colors) {
+        const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
+        const title = c.color && c.color !== "단품" ? esc(c.color) : "기본";
+        html += `<div class="colorblock"><div class="ctitle">${chip}${title}</div>${bcRowsHtml(p, c)}</div>`;
+      }
     }
-    html += "</div>";
   }
   html += `<div class="d-cats">분류: ${p.cats.map(esc).join("<br>")}</div></div>`;
   $detail.innerHTML = html;
@@ -1343,20 +1385,25 @@ function openDetail(id) {
       if (el) openViewer(imgs, [...box.querySelectorAll("img")].indexOf(el));
     };
   }
-  loadGallery(p).then(() => loadMyStock(p));
+  // 갤러리와 자점 재고를 병렬로 — 둘 다 같은 products/view 요청을 쓰므로(프라미스 캐시) 중복 호출 없음
+  loadGallery(p);
+  loadMyStock(p);
 }
 // 상세 화면의 각 바코드 행에 자점(내 매장) 재고를 자동 표시.
 // 옵션마다 stores API 1회 — 서버 배려로 250ms 간격 순차 호출, 세션 캐시 재사용.
+let stockRun = 0;  // 색상 전환 등으로 새 호출이 시작되면 이전 루프는 중단
 async function loadMyStock(p) {
   if (p.storeOnly) return;
+  const run = ++stockRun;
   const store = myStore();
   try {
     let g;
-    try { g = GAL_CACHE[p.id] || await fetchGallery(p.id); } catch (e) { return; }
+    try { g = await fetchGallery(p.id); } catch (e) { return; }
     if (!g || !g.optMap) return;
     let fetched = false;
     // .bcrow(색상·사이즈 블록)와 .stkrow(스펙 표의 재고 행) 둘 다 채운다
     for (const rowEl of [...$detail.querySelectorAll(".bcrow[data-bc], .stkrow[data-bc]")]) {
+      if (run !== stockRun) return;
       // 다른 제품으로 이동했거나 상세를 닫았으면 중단(닫으면 history 상태가 먼저 바뀐다)
       if ((history.state || {}).id !== p.id) return;
       const m = g.optMap[rowEl.dataset.bc];
@@ -1383,7 +1430,7 @@ async function loadMyStock(p) {
     }
   } finally {
     // 못 채운 "확인 중…"은 안내 문구로 바꿔둔다(오프라인·옵션 매핑 실패 등)
-    if ((history.state || {}).id === p.id)
+    if (run === stockRun && (history.state || {}).id === p.id)
       $detail.querySelectorAll(".stk-wait").forEach(el => { el.textContent = "확인 불가 — [재고]를 눌러 재시도"; });
   }
 }
@@ -1399,8 +1446,14 @@ function uniqUrls(a) {
   const seen = new Set();
   return (a || []).filter(u => typeof u === "string" && u && !/no.?image/i.test(u) && !seen.has(u) && (seen.add(u), true));
 }
-async function fetchGallery(id) {
-  if (GAL_CACHE[id]) return GAL_CACHE[id];
+// 같은 제품을 갤러리·재고가 동시에 요청해도 fetch는 1번만 가게 진행 중인 프라미스를 캐시한다
+function fetchGallery(id) {
+  if (!GAL_CACHE[id]) {
+    GAL_CACHE[id] = fetchGalleryRaw(id).catch(e => { delete GAL_CACHE[id]; throw e; });
+  }
+  return GAL_CACHE[id];
+}
+async function fetchGalleryRaw(id) {
   const res = await fetch(`${MUJI_API}/products/view/${encodeURIComponent(id)}`, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error("HTTP " + res.status);
   const prod = (((await res.json()).data || {}).row || {}).product || {};
@@ -1548,8 +1601,7 @@ async function openStock(bc, label) {
   sheet.classList.add("open");
   history.pushState(Object.assign({}, history.state || {}, { stock: true }), "", "#");
   try {
-    let g = GAL_CACHE[pid];
-    if (!g || !g.optMap) g = await fetchGallery(pid);
+    const g = await fetchGallery(pid);
     const m = g.optMap && g.optMap[bc];
     if (!m) throw new Error("옵션 정보 없음");
     if (!STOCK_CACHE[m.oid]) {
