@@ -397,7 +397,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.10";
+const APP_VER = "2026-08-19.11";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1387,9 +1387,10 @@ async function openScanner() {
   const video = document.getElementById("scanvideo");
   // 첫 프레임이 나오면 검은 화면에서 영상으로 페이드인
   video.addEventListener("loadeddata", () => video.classList.add("on"), { once: true });
-  // 처음엔 720p로 요청 — 고해상도(2560) 협상은 카메라 시작을 0.5~2초 늦춘다.
-  // 화면이 뜬 뒤 tuneCameraFocus()에서 같은 트랙의 해상도를 최대로 올린다(화질 유지).
-  const constraints = { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } };
+  // 해상도는 처음부터 2560×1440으로 요청한다. (720p로 시작해 나중에 올리는 방식을
+  // 실험했으나: 시작 속도는 그대로 1~2초였고, 안드로이드 크롬은 켜진 트랙의 해상도를
+  // 처음 연 값 이상으로 못 올려 화질만 떨어졌다 → 되돌림. 남는 1~2초는 카메라 하드웨어 기동 시간.)
+  const constraints = { video: { facingMode: "environment", width: { ideal: 2560 }, height: { ideal: 1440 } } };
   // 카메라와 zxing 라이브러리를 "동시에" 준비 — 카메라가 먼저 되면 화면부터 띄운다
   // (예전엔 라이브러리 로드가 끝나야 카메라를 요청해서 화면이 늦게 떴다)
   const zxingP = loadZxing();
@@ -1440,19 +1441,16 @@ async function openScanner() {
     toast("카메라를 열 수 없습니다");
   }
 }
-// 켜진 카메라 트랙을 다듬는다: 해상도를 최대치로 끌어올리고(빨리 띄우려고 720p로 시작했으므로)
-// 연속 자동초점을 적용해 근접 바코드가 또렷하게 잡히도록 한다(지원 기기 한정)
+// 카메라 트랙에 연속 자동초점을 적용해 근접 바코드가 또렷하게 잡히도록 한다(지원 기기 한정)
 async function tuneCameraFocus(video) {
   try {
     const stream = video.srcObject;
     const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
-    if (!track || !track.applyConstraints) return;
-    const caps = track.getCapabilities ? track.getCapabilities() : {};
-    const want = {};
-    if (caps.width && caps.width.max) want.width = { ideal: Math.min(2560, caps.width.max) };
-    if (caps.height && caps.height.max) want.height = { ideal: Math.min(1440, caps.height.max) };
-    if (caps.focusMode && caps.focusMode.includes("continuous")) want.advanced = [{ focusMode: "continuous" }];
-    if (Object.keys(want).length) await track.applyConstraints(want);
+    if (!track || !track.getCapabilities || !track.applyConstraints) return;
+    const caps = track.getCapabilities();
+    if (caps.focusMode && caps.focusMode.includes("continuous")) {
+      await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+    }
     const st = track.getSettings ? track.getSettings() : {};
     document.getElementById("scanmsg").textContent =
       "바코드를 인식하면 자동으로 제품을 찾습니다" + (st.width ? " (" + st.width + "×" + st.height + ")" : "");
