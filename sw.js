@@ -7,7 +7,7 @@
  *  - 제품 사진(product.mujikorea.co.kr): 캐시 우선 + 최대 900장 제한(초과 시 오래된 것부터 삭제)
  *  - Firebase(교육자료)는 건드리지 않음(온라인 전용)
  */
-const VER = "v2";  // v2: API 응답을 전용 캐시로 분리(개수·유효기간 제한) — v1은 앱 셸 캐시에 무제한 쌓였음
+const VER = "v3";  // v3: 신형 스캐너(zxing-wasm) 파일 사전 캐시 추가. v2: API 응답 전용 캐시 분리
 const SHELL = "muji-shell-" + VER;
 const IMGS = "muji-imgs-" + VER;
 const API = "muji-api-" + VER;
@@ -15,7 +15,8 @@ const IMG_LIMIT = 900;
 const API_LIMIT = 200;                  // 제품 상세·재고 응답 최대 개수
 const API_MAX_AGE = 24 * 60 * 60 * 1000;  // 재고 숫자는 금방 낡으므로 24시간 지나면 오프라인에도 안 씀
 
-const PRECACHE = ["./", "./index.html", "./vendor/zxing.min.js", "./manifest.webmanifest",
+const PRECACHE = ["./", "./index.html", "./vendor/zxing.min.js",
+  "./vendor/zxing-wasm-reader.js", "./vendor/zxing_reader.wasm", "./manifest.webmanifest",
   "./data/products.json", "./data/extra.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", e => {

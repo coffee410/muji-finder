@@ -507,7 +507,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.45";
+const APP_VER = "2026-08-20.46";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -737,9 +737,9 @@ function init(db, extra) {
   });
   buildCatTree();
   route();
-  // 스캐너 라이브러리(360KB)를 한가할 때 미리 받아둔다 → 첫 스캔부터 카메라가 빨리 뜬다
+  // 스캐너 라이브러리(구형 360KB + 신형 wasm 975KB)를 한가할 때 미리 받아둔다 → 첫 스캔부터 빠르게
   if (navigator.mediaDevices && window.isSecureContext) {
-    setTimeout(() => loadZxing().catch(() => {}), 2500);
+    setTimeout(() => { loadZxing().catch(() => {}); loadZxingWasm(); }, 2500);
   }
   // PWA: 서비스 워커 등록(오프라인 캐시 — 앱 셸·데이터·본 사진). 실패해도 앱 동작엔 영향 없음.
   if ("serviceWorker" in navigator) {
@@ -1866,6 +1866,39 @@ function loadZxing() {
   });
   return zxingLoading;
 }
+// 신형 디코더 zxing-wasm(zxing-cpp WASM, vendor/zxing-wasm-reader.js + zxing_reader.wasm 940KB).
+// 구형 대비: 저대비 크라프트지·세로/거꾸로 바코드 인식, 실패 프레임 10~50ms(구형 정밀 731ms).
+// 로드·초기화가 끝나면 __wasmScan=true — 스캔 루프가 틱마다 확인해 신형을 우선 사용.
+// 실패(오프라인 첫 로드 등)해도 기존 zxing-js 체인으로 스캔은 된다.
+let wasmLoading = null;
+function loadZxingWasm() {
+  if (wasmLoading) return wasmLoading;
+  wasmLoading = new Promise(resolve => {
+    const s = document.createElement("script");
+    s.src = "./vendor/zxing-wasm-reader.js";
+    s.onload = async () => {
+      try {
+        window.ZXingWASM.prepareZXingModule({ overrides: { locateFile: p => p.endsWith(".wasm") ? "./vendor/zxing_reader.wasm" : p } });
+        const c = document.createElement("canvas"); c.width = 32; c.height = 32;  // 워밍업(wasm 실로드)
+        await window.ZXingWASM.readBarcodes(c.getContext("2d").getImageData(0, 0, 32, 32), { formats: ["EAN-13"] });
+        window.__wasmScan = true;
+      } catch (e) {}
+      resolve();
+    };
+    s.onerror = () => { wasmLoading = null; resolve(); };
+    document.head.appendChild(s);
+  });
+  return wasmLoading;
+}
+const WASM_FORMATS = ["EAN-13", "EAN-8", "UPC-A", "Code128"];
+async function wasmRead(imageData, hard) {
+  try {
+    const res = await window.ZXingWASM.readBarcodes(imageData,
+      { formats: WASM_FORMATS, tryHarder: !!hard, maxNumberOfSymbols: 1 });
+    const t = res && res[0] && res[0].text;
+    return t ? { getText: () => t } : null;
+  } catch (e) { return null; }
+}
 async function openScanner() {
   // 카메라는 보안 컨텍스트(https 또는 localhost)에서만 열림
   if (!navigator.mediaDevices || !window.isSecureContext) {
@@ -1885,6 +1918,7 @@ async function openScanner() {
   // 카메라와 zxing 라이브러리를 "동시에" 준비 — 카메라가 먼저 되면 화면부터 띄운다
   // (예전엔 라이브러리 로드가 끝나야 카메라를 요청해서 화면이 늦게 떴다)
   const zxingP = loadZxing();
+  loadZxingWasm();  // 신형 디코더도 병렬 준비 — 준비되는 즉시 루프가 자동으로 신형 사용(__wasmScan)
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -2021,21 +2055,38 @@ function startScanLoop(video, fastReader, hardReader, onResult, nativeDet) {
             }
           } catch (e) { nativeDet = null; }  // 미지원·오류면 이후 zxing만 사용
         }
-        // 2) zxing 회색조 (기존 경로)
-        if (!result) result = decode(hard ? hardReader : fastReader, canvas, hard);
-        if (!result) {
-          // 3) 크라프트지(갈색 포장) 저대비 구제(2026-08-20, 실물 사진 검증):
-          // 적갈색 잉크는 회색조에선 갈색 바탕과 명암이 비슷해 일반 경로가 전멸한다.
-          // 녹색(적갈색 잉크가 어둡게)·적색(검정 잉크 대비 최대) 채널을 틱마다 번갈아,
-          // 800px/480px 축소판(강한 축소가 흐림에 상대적으로 강함)을 교대로 재시도. 비용 ~15-30ms.
-          const sw = Math.min(n % 4 < 2 ? 800 : 480, cw), sh = Math.round(ch * sw / cw);
-          if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
-          sctx.drawImage(canvas, 0, 0, sw, sh);
-          const id = sctx.getImageData(0, 0, sw, sh);
-          const d = id.data, off = (n % 2) ? 1 : 0;  // 홀수틱=녹색, 짝수틱=적색
-          for (let i = 0; i < d.length; i += 4) { const v = d[i + off]; d[i] = d[i + 1] = d[i + 2] = v; }
-          sctx.putImageData(id, 0, 0);
-          result = decode(hard ? hardReader : fastReader, small, hard);
+        if (!result && window.__wasmScan) {
+          // 2a) 신형 zxing-wasm(zxing-cpp): 컬러 그대로 + 회전·반전 자동 — 크라프트지·세로 바코드까지
+          // 커버(2026-08-20 실사진 벤치: 실패 프레임 10~30ms, 정밀도·속도 모두 구형 압도).
+          result = await wasmRead(ctx.getImageData(0, 0, cw, ch), hard);
+          if (!result) {
+            // 저대비 구제: 800px 축소판을 녹색·적색 채널 회색조로 바꿔 재시도(시도당 2~10ms라 둘 다)
+            const sw = Math.min(800, cw), sh = Math.round(ch * sw / cw);
+            if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
+            sctx.drawImage(canvas, 0, 0, sw, sh);
+            const sid = sctx.getImageData(0, 0, sw, sh);
+            for (const off of [1, 0]) {  // 녹색(적갈색 잉크가 어둡게) → 적색(검정 잉크 대비 최대)
+              const cid = new ImageData(new Uint8ClampedArray(sid.data), sw, sh);
+              const d = cid.data;
+              for (let i = 0; i < d.length; i += 4) { const v = d[i + off]; d[i] = d[i + 1] = d[i + 2] = v; }
+              result = await wasmRead(cid, hard);
+              if (result) break;
+            }
+          }
+        } else if (!result) {
+          // 2b) 구형 zxing-js 체인 — 신형(wasm) 로드 전이거나 로드 실패한 환경의 폴백
+          result = decode(hard ? hardReader : fastReader, canvas, hard);
+          if (!result) {
+            // 크라프트지 저대비 구제: 녹/적 채널 교대 + 800/480px 축소 교대(비용 ~15-30ms)
+            const sw = Math.min(n % 4 < 2 ? 800 : 480, cw), sh = Math.round(ch * sw / cw);
+            if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
+            sctx.drawImage(canvas, 0, 0, sw, sh);
+            const id = sctx.getImageData(0, 0, sw, sh);
+            const d = id.data, off = (n % 2) ? 1 : 0;  // 홀수틱=녹색, 짝수틱=적색
+            for (let i = 0; i < d.length; i += 4) { const v = d[i + off]; d[i] = d[i + 1] = d[i + 2] = v; }
+            sctx.putImageData(id, 0, 0);
+            result = decode(hard ? hardReader : fastReader, small, hard);
+          }
         }
         if (result && !stopped) onResult(result, null);
       } catch (e) {}  // drawImage 실패 등 — 다음 틱에서 재시도
