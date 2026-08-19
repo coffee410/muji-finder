@@ -587,7 +587,7 @@ let fb = null;   // { db, fs, app } — Firestore, 지연 초기화
 let EDU = null;  // 교육자료 문서 캐시
 // App Check(reCAPTCHA v3) 사이트 키 — 공개용 키(비밀 키는 Firebase 콘솔에만).
 // AI 초안 생성(Firebase AI Logic)이 App Check 강제라서 필요. 비어 있으면 App Check 없이 동작(AI 기능만 비활성).
-const RECAPTCHA_SITE_KEY = "";
+const RECAPTCHA_SITE_KEY = "6Lei1Y4tAAAAABqR-7-z0S450mzM3Vq2bwRQExcg";
 async function initFirebase() {
   if (fb) return fb;
   const [appMod, fs] = await Promise.all([
@@ -598,8 +598,7 @@ async function initFirebase() {
   if (RECAPTCHA_SITE_KEY) {
     try {
       const ac = await import("https://www.gstatic.com/firebasejs/12.17.1/firebase-app-check.js");
-      // 로컬 개발은 디버그 토큰(콘솔에 출력되는 토큰을 Firebase 콘솔에 등록해 사용)
-      if (location.hostname === "localhost") self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+      // localhost도 reCAPTCHA 키에 도메인으로 등록돼 있어 디버그 토큰 없이 동작
       ac.initializeAppCheck(app, { provider: new ac.ReCaptchaV3Provider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
     } catch (e) {}  // App Check 실패해도 Firestore(교육자료)는 계속 동작
   }
