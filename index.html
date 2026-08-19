@@ -65,6 +65,14 @@
   .cat-top button span { display: block; font-size: 11px; color: var(--sub); margin-top: 3px; }
   .sec-title { font-size: 13px; color: var(--sub); margin: 18px 0 8px; }
 
+  /* 외부 바로가기 (홈 하단) */
+  .quicklinks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .quicklinks a {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 13px 10px; font-size: 13px; text-align: center; color: var(--ink); text-decoration: none;
+  }
+
   /* 하위 카테고리 */
   .crumb { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
   .crumb button.back {
@@ -497,7 +505,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.31";
+const APP_VER = "2026-08-19.32";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1167,6 +1175,13 @@ function renderHome() {
     html += `<button onclick='nav({view:"cat",top:${JSON.stringify(top)}})'>${esc(top)}<span>${n.toLocaleString()}개</span></button>`;
   }
   html += "</div>";
+  // 외부 바로가기: 네이버 브랜드 스토어·공식 어플. 어플은 기기별 스토어로 연결
+  const appUrl = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
+    ? "https://apps.apple.com/kr/app/muji-kr/id6739993593"
+    : "https://play.google.com/store/apps/details?id=com.muji";
+  html += `<div class="sec-title">바로가기</div><div class="quicklinks">
+    <a href="https://brand.naver.com/mujikorea" target="_blank" rel="noopener">🛒 네이버 스마트 스토어</a>
+    <a href="${appUrl}" target="_blank" rel="noopener">📱 공식 어플 (MUJI KR)</a></div>`;
   html += `<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.<br><span class="ver">v${APP_VER}</span><span class="adminlink" onclick='nav({view:"admin"})'>·</span></footer>`;
   $main.innerHTML = html;
 }
