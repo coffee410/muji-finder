@@ -169,11 +169,16 @@
   .cchips button {
     display: flex; flex-direction: column; align-items: center; gap: 4px;
     border: 1px solid var(--line); background: var(--card); border-radius: 10px;
-    padding: 7px 9px; min-width: 62px; cursor: pointer;
-    font-size: 11.5px; color: var(--ink); flex-shrink: 0; word-break: keep-all;
+    padding: 7px 5px; width: 78px; cursor: pointer;
+    font-size: 11px; color: var(--ink); flex-shrink: 0;
   }
   .cchips button img { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; border: 1px solid var(--line); pointer-events: none; }
-  .cchips button span { pointer-events: none; max-width: 96px; }
+  /* 색상명이 길어도 칩 폭은 고정 — 2줄까지 보여주고 말줄임. 전체 이름은 칩 아래 제목 줄에 표시 */
+  .cchips button span {
+    pointer-events: none; max-width: 100%; line-height: 1.25; text-align: center;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    word-break: keep-all; overflow-wrap: anywhere;
+  }
   .cchips button.on { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); font-weight: 700; }
   .cchips .cso { font-size: 10px; color: #b0473a; }
   .bcrow {
@@ -487,7 +492,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.25";
+const APP_VER = "2026-08-19.26";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1354,6 +1359,8 @@ window.selColor = i => {
   const rows = document.getElementById("sizerows");
   if (!p || !rows || !p.colors[i]) return;
   document.querySelectorAll("#cchips > button").forEach((b, j) => b.classList.toggle("on", j === i));
+  const title = document.getElementById("seltitle");
+  if (title) title.textContent = p.colors[i].color === "단품" ? "기본" : p.colors[i].color;
   rows.innerHTML = bcRowsHtml(p, p.colors[i]);
   loadMyStock(p);
 };
@@ -1391,7 +1398,8 @@ function openDetail(id) {
           const so = c.sizes.length && c.sizes.every(s => s.state === "SOLDOUT");
           return `<button class="${i === 0 ? "on" : ""}" onclick="selColor(${i})">${chip}<span>${esc(c.color === "단품" ? "기본" : c.color)}</span>${so ? '<span class="cso">품절</span>' : ""}</button>`;
         }).join("") +
-        `</div><div id="sizerows">${bcRowsHtml(p, p.colors[0])}</div></div>`;
+        `</div><div class="ctitle" id="seltitle">${esc(p.colors[0].color === "단품" ? "기본" : p.colors[0].color)}</div>` +
+        `<div id="sizerows">${bcRowsHtml(p, p.colors[0])}</div></div>`;
     } else {
       for (const c of p.colors) {
         const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
