@@ -506,7 +506,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.35";
+const APP_VER = "2026-08-19.36";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1167,25 +1167,10 @@ function doSearch(qRaw) {
 
 /* ---------- 외부 바로가기 링크 ---------- */
 const IS_IOS = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
-const IS_ANDROID = /Android/.test(navigator.userAgent);
 const PLAY_URL = "https://play.google.com/store/apps/details?id=com.muji";
-// 안드로이드에서 공식앱(com.muji) 열기 시도. intent URL을 <a href>로 직접 쓰면
-// 홈 화면 앱(PWA) 환경에서 조용히 무시돼 버튼이 무반응이 된다(2026-08-19 사용자 확인).
-// JS로 intent를 시도하고, 1.2초 안에 화면이 안 바뀌면(=앱이 안 열림) 폴백 주소로 강제 이동.
-function openMujiApp(webUrl, fallback) {
-  const intent = "intent://" + webUrl.replace(/^https:\/\//, "") +
-    "#Intent;scheme=https;package=com.muji;S.browser_fallback_url=" +
-    encodeURIComponent(fallback) + ";end";
-  // 실기기 관찰(2026-08-19): 앱은 폴백의 https 주소 내비게이션으로 열리는 것으로 보임(1.2초 지연이 그대로 체감됨)
-  // → 대기 0.5초로 단축. 앱 전환이 시작되면(blur/visibilitychange/pagehide) 폴백 취소.
-  const t = setTimeout(() => { if (!document.hidden) location.href = fallback; }, 500);
-  const stop = () => clearTimeout(t);
-  addEventListener("pagehide", stop, { once: true });
-  addEventListener("blur", stop, { once: true });
-  document.addEventListener("visibilitychange", () => { if (document.hidden) stop(); }, { once: true });
-  try { location.href = intent; } catch (e) { stop(); location.href = fallback; }
-  return false;  // onclick에서 기본 링크 이동 억제용
-}
+// ※ MUJI KR 앱(com.muji) 자동 실행은 불가 — 앱에 외부 진입용 딥링크(browsable intent filter,
+// assetlinks.json)가 전혀 없어 intent URL이 어떤 환경에서도 앱을 못 연다(2026-08-19 실기기 확인).
+// 웹에서 가능한 최선: Play스토어 목록(설치돼 있으면 "열기" 버튼) 또는 온라인몰 웹페이지 직행.
 
 /* ---------- 화면 렌더 ---------- */
 function renderHome() {
@@ -1200,9 +1185,7 @@ function renderHome() {
   html += "</div>";
   // 외부 바로가기: 네이버 브랜드 스토어·공식 어플.
   // 안드로이드는 intent URL로 앱이 설치돼 있으면 바로 열고, 없으면 Play스토어로 폴백.
-  const appBtn = IS_ANDROID
-    ? `<a href="${PLAY_URL}" onclick="return openMujiApp('https://mujikorea.co.kr/', 'https://mujikorea.co.kr/')">📱 공식 어플 (MUJI KR)</a>`
-    : `<a href="${IS_IOS ? "https://apps.apple.com/kr/app/muji-kr/id6739993593" : PLAY_URL}" target="_blank" rel="noopener">📱 공식 어플 (MUJI KR)</a>`;
+  const appBtn = `<a href="${IS_IOS ? "https://apps.apple.com/kr/app/muji-kr/id6739993593" : PLAY_URL}" target="_blank" rel="noopener">📱 공식 어플 (MUJI KR)</a>`;
   html += `<div class="sec-title">바로가기</div><div class="quicklinks">
     <a href="https://brand.naver.com/mujikorea" target="_blank" rel="noopener">🛒 네이버 스마트 스토어</a>
     ${appBtn}</div>`;
@@ -1465,9 +1448,7 @@ function openDetail(id) {
     const webUrl = `https://mujikorea.co.kr/products/view/${p.id}`;
     const naverUrl = `https://brand.naver.com/mujikorea/search?q=${encodeURIComponent(p.name)}`;
     const tgt = ' target="_blank" rel="noopener"';
-    const mallBtn = IS_ANDROID
-      ? `<a href="${webUrl}" onclick="return openMujiApp('${webUrl}', '${webUrl}')">📱 온라인몰·공식앱</a>`
-      : `<a href="${webUrl}"${tgt}>📱 온라인몰·공식앱</a>`;
+    const mallBtn = `<a href="${webUrl}"${tgt}>🌐 온라인몰에서 보기</a>`;
     html += `<div class="quicklinks dlinks">
       <a href="${esc(naverUrl)}"${tgt}>🛒 네이버 스토어 검색</a>
       ${mallBtn}</div>`;
