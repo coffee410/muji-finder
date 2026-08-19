@@ -506,7 +506,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.37";
+const APP_VER = "2026-08-19.38";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1169,6 +1169,13 @@ function doSearch(qRaw) {
    ※ MUJI KR 앱(com.muji) 자동 실행은 불가 — 앱에 외부 진입용 딥링크(browsable intent filter,
    assetlinks.json)가 전혀 없어 intent·커스텀 스킴이 어떤 환경에서도 앱을 못 연다(2026-08-19 실기기 확인).
    그래서 전부 온라인몰 웹으로 연결한다(앱과 내용 동일). */
+// 네이버 스토어 검색어 정리: 특수문자나 숫자 치수(예: 225~250)가 섞이면 검색이 안 됨(2026-08-19 사용자 확인)
+// → 특수문자는 공백으로, 숫자가 든 토큰(치수·규격류)은 통째로 제거. 전부 지워지면 특수문자만 뺀 원본 사용.
+function naverQuery(name) {
+  const base = name.replace(/[^0-9A-Za-z가-힣ㄱ-ㅎ\s]/g, " ");
+  const words = base.split(/\s+/).filter(w => w && !/\d/.test(w));
+  return words.length ? words.join(" ") : base.replace(/\s+/g, " ").trim();
+}
 
 /* ---------- 화면 렌더 ---------- */
 function renderHome() {
@@ -1443,7 +1450,7 @@ function openDetail(id) {
   // 매장 전용 상품은 온라인몰·네이버에 없으므로 생략. 네이버는 제품 ID 매핑이 없어 이름 검색으로 이동.
   if (!p.storeOnly) {
     const webUrl = `https://mujikorea.co.kr/products/view/${p.id}`;
-    const naverUrl = `https://brand.naver.com/mujikorea/search?q=${encodeURIComponent(p.name)}`;
+    const naverUrl = `https://brand.naver.com/mujikorea/search?q=${encodeURIComponent(naverQuery(p.name))}`;
     const tgt = ' target="_blank" rel="noopener"';
     const mallBtn = `<a href="${webUrl}"${tgt}>🌐 온라인몰에서 보기</a>`;
     html += `<div class="quicklinks dlinks">
