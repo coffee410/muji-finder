@@ -506,7 +506,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.40";
+const APP_VER = "2026-08-20.41";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -538,6 +538,7 @@ async function loadEdu(key) {
     try {
       const dec = await decryptObj(key, data);  // { title, desc, body } 또는 { type:"img", ... }
       if (dec.type === "img") continue;         // 분리 저장 이미지는 목록에서 숨김
+      if (dec.del) continue;                    // 소프트 삭제된 문서(하드 삭제는 보안 규칙이 금지)
       out.push({ id: d.id, order: data.order, ...dec });
     } catch (e) {
       out.push({ id: d.id, order: data.order, title: "🔒 열 수 없음", desc: "현재 비밀번호로 복호화 안 됨", body: "", _locked: true });
@@ -682,9 +683,9 @@ function chosung(str) {
   }
   return out;
 }
-// 검색 비교용 정규화: 공백·중점·괄호류 제거 + 소문자
+// 검색 비교용 정규화: 공백·중점(ㆍ·・ 세 종류 모두)·괄호류 제거 + 소문자
 function norm(str) {
-  return (str || "").toLowerCase().replace(/[\sㆍㆍ··()\[\]\-_,./]/g, "");
+  return (str || "").toLowerCase().replace(/[\sㆍ·・()\[\]\-_,./]/g, "");
 }
 function isChosungQuery(s) { return /^[ㄱ-ㅎ]+$/.test(s); }
 
@@ -969,10 +970,12 @@ function renderEduEdit(id) {
   if (delBtn) delBtn.addEventListener("click", () => deleteEdu(id));
   const clearBtn = document.getElementById("eduDraftClear");
   if (clearBtn) clearBtn.addEventListener("click", () => clearEduDraft(id));
-  ["eduTitle", "eduDesc", "eduBody", "eduOrder"].forEach(fid => {
+  ["eduTitle", "eduDesc", "eduCat", "eduBody", "eduOrder"].forEach(fid => {
     const el = document.getElementById(fid);
     if (el) el.addEventListener("input", () => autoSaveEduDraft(id));
   });
+  const lockEl = document.getElementById("eduLock");  // 체크박스는 input이 아니라 change 이벤트
+  if (lockEl) lockEl.addEventListener("change", () => autoSaveEduDraft(id));
   window.scrollTo(0, 0);
 }
 function renderEduPw(next) {
@@ -1035,8 +1038,16 @@ async function deleteEdu(id) {
   if (server && server.lock && !isAdmin()) { toast("🔒 관리자만 삭제할 수 있는 자료입니다"); return; }
   if (!confirm("이 교육자료를 삭제할까요? 되돌릴 수 없습니다.")) return;
   try {
+    // 소프트 삭제: 보안 규칙이 하드 삭제를 금지하므로(외부인의 문서 파괴 방지),
+    // 내용을 유지한 채 del 표시만 붙여 저장한다. 목록에선 사라지고, 필요 시 DB에서 복구 가능.
+    const key = await ensureEduKey();
+    if (!key) { toast("비밀번호가 필요합니다"); return; }
     const { db, fs } = await initFirebase();
-    await fs.deleteDoc(fs.doc(db, "edu", id));
+    const payload = server
+      ? { title: server.title, desc: server.desc, cat: server.cat, body: server.body, ...(server.lock ? { lock: true } : {}), del: true }
+      : { del: true };
+    const encrypted = await encryptObj(key, payload);
+    await fs.setDoc(fs.doc(db, "edu", id), { ...encrypted, order: (server && Number(server.order)) || 999, updatedAt: fs.serverTimestamp() });
     EDU = null;
     toast("삭제되었습니다");
     history.pushState({ view: "edu" }, "", "#"); route();
@@ -1054,7 +1065,7 @@ function md2html(src) {
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
       '<a class="doc-link" href="$2" target="_blank" rel="noopener">$1</a>');
   const lines = src.replace(/\r\n/g, "\n").split("\n");
-  let html = "", list = null, para = [], table = [];
+  let html = "", list = null, para = [], table = [], foldDepth = 0;
   const flushPara = () => { if (para.length) { html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
   const flushList = () => { if (list) { html += "</" + list + ">"; list = null; } };
   const flushTable = () => {
@@ -1096,8 +1107,9 @@ function md2html(src) {
     } else if ((m = line.match(/^\+\+\+\s*(.*)$/))) {
       // 접기 블록: "+++ 제목"으로 열고 "+++" 단독 줄로 닫는다. 긴 문서를 최소화해 보여줄 때 사용
       flushAll();
-      if (m[1].trim()) html += `<details class="doc-fold"><summary>${inline(m[1].trim())}</summary><div class="doc-fold-body">`;
-      else html += "</div></details>";
+      if (m[1].trim()) { html += `<details class="doc-fold"><summary>${inline(m[1].trim())}</summary><div class="doc-fold-body">`; foldDepth++; }
+      else if (foldDepth > 0) { html += "</div></details>"; foldDepth--; }
+      // 열린 접기가 없는데 "+++"만 오면 무시(잘못된 닫는 태그 출력 방지)
     } else if ((m = line.match(/^!\[([^\]]*)\]\(eimg:([A-Za-z0-9]+)\)\s*$/))) {
       // 분리 저장된 암호화 이미지: 본문 크기 제한을 피해 별도 문서에 담긴 이미지를 지연 로드
       flushPara(); flushList();
@@ -1124,6 +1136,7 @@ function md2html(src) {
     }
   }
   flushAll();
+  while (foldDepth-- > 0) html += "</div></details>";  // 닫지 않은 접기 자동 마감
   return html;
 }
 
@@ -1191,7 +1204,8 @@ function renderHome() {
   for (const top of tops) {
     let n = 0;
     for (const mid in CATTREE[top]) for (const leaf in CATTREE[top][mid]) n += CATTREE[top][mid][leaf];
-    html += `<button onclick='nav({view:"cat",top:${JSON.stringify(top)}})'>${esc(top)}<span>${n.toLocaleString()}개</span></button>`;
+    // JSON.stringify 결과를 esc()로 한 번 더 감싸야 값에 따옴표가 있어도 onclick 속성이 안 깨진다
+    html += `<button onclick='nav({view:"cat",top:${esc(JSON.stringify(top))}})'>${esc(top)}<span>${n.toLocaleString()}개</span></button>`;
   }
   html += "</div>";
   // 외부 바로가기: 네이버 브랜드 스토어·공식 어플.
@@ -1210,7 +1224,7 @@ function renderCat(top) {
     html += `<div class="leaf-group"><h3>${esc(mid)}</h3><div class="leaf-list">`;
     for (const leaf in mids[mid]) {
       const label = leaf.split(" > ").pop();
-      html += `<button onclick='nav({view:"leaf",leaf:${JSON.stringify(leaf)}})'>${esc(label)} <b>${mids[mid][leaf]}</b></button>`;
+      html += `<button onclick='nav({view:"leaf",leaf:${esc(JSON.stringify(leaf))}})'>${esc(label)} <b>${mids[mid][leaf]}</b></button>`;
     }
     html += "</div></div>";
   }
@@ -1225,7 +1239,7 @@ function renderLeaf(leaf) {
   const label = leaf.split(" > ").join(" › ");
   let html = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">${esc(label)}</span></div>`;
   html += `<div class="rescount">${items.length}개</div>`;
-  html += grid(items, gridLimit, `renderLeafMore(${JSON.stringify(leaf)})`);
+  html += grid(items, gridLimit, `renderLeafMore(${esc(JSON.stringify(leaf))})`);
   $main.innerHTML = html;
   window.scrollTo(0, 0);
 }
@@ -1284,7 +1298,7 @@ function cardHtml(p) {
     : '<span class="noimg">이미지 없음</span>';
   const badge = p.storeOnly ? '<span class="store-badge">매장전용</span>'
     : (p.state === "SOLDOUT" ? '<span class="soldout-badge">품절</span>' : "");
-  return `<div class="pcard" onclick='nav({view:"product",id:${JSON.stringify(p.id)}})'>
+  return `<div class="pcard" onclick='nav({view:"product",id:${esc(JSON.stringify(p.id))}})'>
     <div class="ph">${img}</div>
     <div class="nm">${badge}${esc(p.name)}</div>
     <div class="pr">${p.price ? p.price.toLocaleString() + "원" : ""}</div>
@@ -1330,7 +1344,7 @@ function specHtml(spec, stk) {
     if (k === "제품 코드") {
       // 영문이 섞인 코드(의류 등)는 수입 품번 — 인트라넷/발주에서 쓰는 명칭
       if (/[A-Za-z]/.test(spec[k])) label = "수입 품번";
-      copyBtn = `<button class="sbtn" onclick="copyText('${esc(spec[k])}', '${label} 복사됨')">복사</button>`;
+      copyBtn = `<button class="sbtn" onclick="copyText(${esc(JSON.stringify(spec[k]))}, '${label} 복사됨')">복사</button>`;
     }
     return `<div class="spec-row${copyBtn ? " coderow" : ""}"><span class="spec-k">${esc(label)}</span><span class="spec-v${k === "제품 코드" ? " mono" : ""}">${esc(spec[k])}</span>${copyBtn}</div>`;
   });
@@ -1717,7 +1731,6 @@ async function openStock(bc, label) {
     if (!m) throw new Error("옵션 정보 없음");
     const rows = await fetchStores(m.oid);
     if (!STOCK_OPEN) return;  // 기다리는 사이 닫은 경우
-    window.__stockArgs = [bc, label, m, rows];
     renderStockSheet(bc, label, m, rows);
   } catch (e) {
     if (!STOCK_OPEN) return;
@@ -1727,6 +1740,7 @@ async function openStock(bc, label) {
   }
 }
 function renderStockSheet(bc, label, m, rows, q, showZero) {
+  window.__stockArgs = [bc, label, m, rows, q, showZero];  // ☆ 저장 후 재렌더 시 검색어·펼침 상태 유지
   const sheet = document.getElementById("stocksheet");
   const my = myStore();
   const nq = norm(q || "");
@@ -1934,7 +1948,7 @@ async function openScanner() {
     }
   } catch (e) {
     closeScanner();
-    toast("카메라를 열 수 없습니다");
+    toast("스캐너 시작에 실패했습니다. 다시 열어 보세요");  // 카메라는 이미 켜진 뒤라 인식기 준비 쪽 문제
   }
 }
 // 자체 크롭 해독 루프 — 화면 중앙(가로 86% × 세로 44%)만 잘라 zxing으로 해독.

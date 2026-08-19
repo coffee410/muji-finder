@@ -7,13 +7,16 @@
  *  - 제품 사진(product.mujikorea.co.kr): 캐시 우선 + 최대 900장 제한(초과 시 오래된 것부터 삭제)
  *  - Firebase(교육자료)는 건드리지 않음(온라인 전용)
  */
-const VER = "v1";
+const VER = "v2";  // v2: API 응답을 전용 캐시로 분리(개수·유효기간 제한) — v1은 앱 셸 캐시에 무제한 쌓였음
 const SHELL = "muji-shell-" + VER;
 const IMGS = "muji-imgs-" + VER;
+const API = "muji-api-" + VER;
 const IMG_LIMIT = 900;
+const API_LIMIT = 200;                  // 제품 상세·재고 응답 최대 개수
+const API_MAX_AGE = 24 * 60 * 60 * 1000;  // 재고 숫자는 금방 낡으므로 24시간 지나면 오프라인에도 안 씀
 
 const PRECACHE = ["./", "./index.html", "./vendor/zxing.min.js", "./manifest.webmanifest",
-  "./data/products.json", "./data/extra.json", "./icon-192.png", "./icon-512.png"];
+  "./data/products.json", "./data/extra.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil((async () => {
@@ -27,11 +30,37 @@ self.addEventListener("install", e => {
 self.addEventListener("activate", e => {
   e.waitUntil((async () => {
     for (const k of await caches.keys()) {
-      if (k !== SHELL && k !== IMGS) await caches.delete(k);
+      if (k !== SHELL && k !== IMGS && k !== API) await caches.delete(k);
     }
     await self.clients.claim();
   })());
 });
+
+// API 응답 전용: 네트워크 우선 + 저장 시각 헤더를 붙여 보관, 오프라인 폴백 시 24시간 넘은 것은 버림.
+// put 전에 delete로 항목을 맨 뒤로 보내 trimCache(오래된 것부터 삭제)가 LRU처럼 동작하게 한다.
+async function apiNetworkFirst(req) {
+  const c = await caches.open(API);
+  try {
+    const res = await fetch(req);
+    if (res && res.ok) {
+      const body = await res.clone().blob();
+      const headers = new Headers(res.headers);
+      headers.set("sw-cached-at", String(Date.now()));
+      await c.delete(req);
+      await c.put(req, new Response(body, { status: res.status, statusText: res.statusText, headers }));
+      trimCache(c, API_LIMIT); // 기다리지 않음
+    }
+    return res;
+  } catch (err) {
+    const hit = await c.match(req);
+    if (hit) {
+      const t = Number(hit.headers.get("sw-cached-at") || 0);
+      if (t && Date.now() - t < API_MAX_AGE) return hit;
+      c.delete(req); // 너무 낡은 응답은 스테일 재고 표시 방지를 위해 폐기
+    }
+    throw err;
+  }
+}
 
 async function networkFirst(req, cacheName) {
   const c = await caches.open(cacheName);
@@ -75,9 +104,9 @@ self.addEventListener("fetch", e => {
     e.respondWith(cacheFirst(req, IMGS, IMG_LIMIT));
     return;
   }
-  // 무인양품 API(상세 사진 목록): 네트워크 우선, 오프라인이면 본 적 있는 응답
+  // 무인양품 API(상세 사진 목록·재고): 네트워크 우선, 오프라인이면 24시간 내 응답만 폴백
   if (url.hostname === "api.mujikorea.co.kr") {
-    e.respondWith(networkFirst(req, SHELL));
+    e.respondWith(apiNetworkFirst(req));
     return;
   }
   // 같은 오리진(앱 셸·데이터)
