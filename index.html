@@ -493,6 +493,7 @@
   <div class="scan-head">
     <button onclick="closeScanner()">✕ 닫기</button>
     <span>바코드를 네모 칸 안에 맞춰주세요</span>
+    <button id="scanzoom" style="display:none;margin-left:auto" aria-label="카메라 줌">1×</button>
   </div>
   <video id="scanvideo" playsinline muted></video>
   <div class="scan-mask"></div>
@@ -506,7 +507,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.43";
+const APP_VER = "2026-08-20.44";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1896,6 +1897,7 @@ async function openScanner() {
   video.srcObject = stream;
   try { await video.play(); } catch (e) {}
   tuneCameraFocus(video);  // 근접 초점 개선(연속 초점) — 인식 준비와 무관하게 바로
+  initScanZoom(video);     // 줌 지원 기기면 1×/1.5×/2× 버튼 표시
   try {
     await zxingP;
   } catch (e) {
@@ -1973,9 +1975,20 @@ let scanLoopStop = null;
 function startScanLoop(video, fastReader, hardReader, onResult) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  // 채널 분리 재시도용 축소 캔버스(아래 주석 참고)
+  const small = document.createElement("canvas");
+  const sctx = small.getContext("2d", { willReadFrequently: true });
   let stopped = false, n = 0;
   if (scanLoopStop) scanLoopStop();  // 혹시 남아있던 이전 루프 정지(항상 1개만)
   scanLoopStop = () => { stopped = true; };
+  const decode = (reader, cv, useGlobal) => {
+    const lum = new ZXing.HTMLCanvasElementLuminanceSource(cv);
+    try { return reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum))); } catch (e1) {}
+    if (useGlobal && ZXing.GlobalHistogramBinarizer) {
+      try { return reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.GlobalHistogramBinarizer(lum))); } catch (e2) {}
+    }
+    return null;
+  };
   const tick = () => {
     if (stopped) return;
     scanLastTick = Date.now();
@@ -1986,15 +1999,20 @@ function startScanLoop(video, fastReader, hardReader, onResult) {
         if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
         ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, cw, ch);
         const hard = (++n % 8 === 0);
-        const reader = hard ? hardReader : fastReader;
-        const lum = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
-        let result = null;
-        try {
-          result = reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum)));
-        } catch (e1) {
-          if (hard && ZXing.GlobalHistogramBinarizer) {
-            try { result = reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.GlobalHistogramBinarizer(lum))); } catch (e2) {}
-          }
+        let result = decode(hard ? hardReader : fastReader, canvas, hard);
+        if (!result) {
+          // 크라프트지(갈색 포장) 저대비 바코드 구제(2026-08-20, 실물 사진 3장으로 검증):
+          // 적갈색 잉크는 회색조에선 갈색 바탕과 명암이 비슷해 빠른 리더가 전멸한다.
+          // 녹색 채널(적색 잉크가 어둡게 나옴)·적색 채널(검정 잉크 대비 최대)을 틱마다 번갈아,
+          // 800px 축소판(흐림에 더 강하고 픽셀 1/4 이하라 비용 ~30ms)에서 재시도한다.
+          const sw = Math.min(800, cw), sh = Math.round(ch * sw / cw);
+          if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
+          sctx.drawImage(canvas, 0, 0, sw, sh);
+          const id = sctx.getImageData(0, 0, sw, sh);
+          const d = id.data, off = (n % 2) ? 1 : 0;  // 홀수틱=녹색, 짝수틱=적색
+          for (let i = 0; i < d.length; i += 4) { const v = d[i + off]; d[i] = d[i + 1] = d[i + 2] = v; }
+          sctx.putImageData(id, 0, 0);
+          result = decode(hard ? hardReader : fastReader, small, hard);
         }
         if (result) onResult(result, null);
       } catch (e) {}  // drawImage 실패 등 — 다음 틱에서 재시도
@@ -2002,6 +2020,28 @@ function startScanLoop(video, fastReader, hardReader, onResult) {
     setTimeout(tick, 90);
   };
   tick();
+}
+// 카메라 줌 버튼(지원 기기 한정): 작은 상자의 바코드는 가까이 대면 초점이 안 잡히는데(최소 초점거리),
+// 줌을 쓰면 초점 잡히는 거리를 유지한 채 바코드를 크게 담을 수 있다(2026-08-20, 크라프트 소형박스 대응)
+function initScanZoom(video) {
+  const btn = document.getElementById("scanzoom");
+  if (!btn) return;
+  btn.style.display = "none";
+  try {
+    const track = video.srcObject && video.srcObject.getVideoTracks()[0];
+    const caps = track && track.getCapabilities ? track.getCapabilities() : null;
+    if (!caps || !caps.zoom || !(caps.zoom.max > caps.zoom.min)) return;
+    const levels = [1, 1.5, 2].filter(z => z >= caps.zoom.min && z <= caps.zoom.max);
+    if (levels.length < 2) return;
+    let i = 0;
+    btn.textContent = levels[0] + "×";
+    btn.style.display = "";
+    btn.onclick = async () => {
+      i = (i + 1) % levels.length;
+      try { await track.applyConstraints({ advanced: [{ zoom: levels[i] }] }); } catch (e) {}
+      btn.textContent = levels[i] + "×";
+    };
+  } catch (e) {}
 }
 // 카메라 트랙에 연속 자동초점을 적용해 근접 바코드가 또렷하게 잡히도록 한다(지원 기기 한정)
 async function tuneCameraFocus(video) {
