@@ -86,7 +86,9 @@
     content-visibility: auto; contain-intrinsic-size: auto 180px;
   }
   .pcard .ph { aspect-ratio: 1; background: #f0eeeb; display: flex; align-items: center; justify-content: center; }
-  .pcard .ph img { width: 100%; height: 100%; object-fit: cover; }
+  /* 사진이 뚝뚝 나타나지 않게: 로딩 완료 시 배경색에서 부드럽게 페이드인 */
+  .pcard .ph img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s ease; }
+  .pcard .ph img.ld { opacity: 1; }
   .pcard .ph .noimg { font-size: 11px; color: var(--sub); }
   .pcard .nm { font-size: 12px; padding: 7px 8px 2px; line-height: 1.35;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 34px; }
@@ -115,7 +117,9 @@
   .d-head span { font-size: 13px; color: var(--sub); }
   .d-body { padding: 16px; }
   .d-imgs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; }
-  .d-imgs img { height: 150px; border-radius: 10px; border: 1px solid var(--line); background: #fff; cursor: zoom-in; }
+  .d-imgs img { height: 150px; border-radius: 10px; border: 1px solid var(--line); background: #f0eeeb; cursor: zoom-in;
+    min-width: 112px; opacity: 0; transition: opacity .25s ease; }
+  .d-imgs img.ld { opacity: 1; }
   .galg { margin-bottom: 10px; }
   .galg .gall { font-size: 11.5px; color: var(--sub); margin: 0 2px 5px; }
   .galg .d-imgs { margin-bottom: 0; }
@@ -187,7 +191,8 @@
   footer { text-align: center; font-size: 11px; color: var(--sub); padding: 24px 16px; line-height: 1.6; }
   /* 관리자 입구: footer 맨 아래 흐린 점 하나(누르는 영역은 넉넉히) */
   footer .adminlink { display: inline-block; padding: 10px 16px; color: var(--line); cursor: pointer; user-select: none; }
-  .crumb .edu-lockmark { margin-left: auto; font-size: 14px; opacity: .45; }
+  .crumb .edu-lockmark { margin-left: auto; font-size: 15px; opacity: .5;
+    border: 0; background: none; padding: 6px 8px; cursor: pointer; }
   /* 본문 화면 전환: 살짝 떠오르는 페이드 */
   @keyframes viewin { from { opacity: 0; transform: translateY(6px); } }
   #main.vin { animation: viewin .16s ease; }
@@ -444,7 +449,7 @@ const EDU_PW_HASH = "02f3c8e9896c0ab95e98c3fce2a3e058a23b3904b6f1ec8460f1d329835
 const EDU_ADMIN_HASH = "529c47297e906c6455b3e2394ad66a2ae34bf12b28e2867edc6dfb0bd3e1adb0";
 function isAdmin() { return localStorage.getItem("eduAdmin") === "1"; }
 function renderAdminPw() {
-  setTab("find");
+  // 홈 footer(제품 찾기 탭)와 잠긴 문서의 🔒(교육자료 탭) 양쪽에서 들어오므로 탭 표시는 바꾸지 않는다
   if (isAdmin()) {
     $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">관리자</span></div>
       <div class="eduform">
@@ -706,10 +711,10 @@ function renderEduDoc(id) {
   ensureEduKey().then(key => {
     if (!key) { renderEduPw("list"); return; }
     const draw = d => {
-      // 잠금 문서는 관리자 모드에서만 편집 버튼 노출
+      // 잠금 문서는 관리자 모드에서만 편집 버튼 노출. 🔒를 누르면 관리자 로그인으로.
       const editBtn = (!d.lock || isAdmin())
         ? `<button class="edu-edit" onclick='nav({view:"eduedit",id:${JSON.stringify(id)}})'>편집</button>`
-        : `<span class="edu-lockmark" title="관리자만 수정할 수 있습니다">🔒</span>`;
+        : `<button class="edu-lockmark" onclick='nav({view:"admin"})' title="관리자만 수정할 수 있습니다 (탭하면 관리자 로그인)">🔒</button>`;
       $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 목록</button><span class="path">${esc(d.title)}</span>
         ${editBtn}</div>
         <div class="doc">${md2html(d.body || "")}</div>`;
@@ -1064,7 +1069,7 @@ window.renderSearchMore = () => {
 
 function cardHtml(p) {
   const img = p._img
-    ? `<img src="${esc(imgUrl(p._img, 300))}" loading="lazy" decoding="async" alt="">`
+    ? `<img src="${esc(imgUrl(p._img, 300))}" loading="lazy" decoding="async" onload="this.classList.add('ld')" alt="">`
     : '<span class="noimg">이미지 없음</span>';
   const badge = p.storeOnly ? '<span class="store-badge">매장전용</span>'
     : (p.state === "SOLDOUT" ? '<span class="soldout-badge">품절</span>' : "");
@@ -1102,7 +1107,7 @@ function openDetail(id) {
   if (!imgs.length && p._img) imgs = [p._img];
   let html = `<div class="d-head"><button onclick="history.back()">← 뒤로</button><span>제품 상세</span></div><div class="d-body">`;
   html += '<div id="gal">' + (imgs.length
-    ? '<div class="d-imgs">' + imgs.map(u => `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" alt="">`).join("") + "</div>"
+    ? '<div class="d-imgs">' + imgs.map(u => `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" onload="this.classList.add('ld')" alt="">`).join("") + "</div>"
     : "") + "</div>";
   html += `<div class="namebox">
     <div class="lbl">정확한 제품명 (인트라넷 검색용)</div>
@@ -1198,7 +1203,7 @@ async function loadGallery(p) {
     const grpHtml = (grp, gi) =>
       `<div class="galg">${multi && grp.color ? `<div class="gall">${esc(grp.color)} · ${grp.imgs.length}장</div>` : ""}
         <div class="d-imgs">${grp.imgs.map((u, i) =>
-          `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" alt="" data-g="${gi}" data-i="${i}">`).join("")}</div>
+          `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" onload="this.classList.add('ld')" alt="" data-g="${gi}" data-i="${i}">`).join("")}</div>
       </div>`;
     // 색상이 많으면 제품명이 한참 아래로 밀리므로 3번째 색상부터는 접어둔다
     const head = g.groups.slice(0, 2).map(grpHtml).join("");
