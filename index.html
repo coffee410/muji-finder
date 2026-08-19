@@ -6,6 +6,10 @@
 <meta name="theme-color" content="#7f0019">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="MUJI 찾기">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
 <title>MUJI 제품 찾기</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -417,7 +421,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.15";
+const APP_VER = "2026-08-19.16";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -648,6 +652,10 @@ function init(db, extra) {
   // 스캐너 라이브러리(360KB)를 한가할 때 미리 받아둔다 → 첫 스캔부터 카메라가 빨리 뜬다
   if (navigator.mediaDevices && window.isSecureContext) {
     setTimeout(() => loadZxing().catch(() => {}), 2500);
+  }
+  // PWA: 서비스 워커 등록(오프라인 캐시 — 앱 셸·데이터·본 사진). 실패해도 앱 동작엔 영향 없음.
+  if ("serviceWorker" in navigator) {
+    setTimeout(() => navigator.serviceWorker.register("./sw.js").catch(() => {}), 1500);
   }
 }
 function firstImg(p) {
