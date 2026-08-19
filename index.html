@@ -186,6 +186,17 @@
   .spec-row:first-child { border-top: 0; }
   .spec-k { flex-shrink: 0; width: 64px; color: var(--sub); font-weight: 600; }
   .spec-v { flex: 1; min-width: 0; line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; user-select: all; }
+  .spec-v.mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 15px; letter-spacing: 0.5px; }
+  /* 스펙 표의 재고 행(단일 바코드 제품 — 하단 바코드 블록 대신) */
+  .stkrow { align-items: center; }
+  .spec-row .sbtn {
+    border: 1px solid var(--line); background: var(--bg); border-radius: 8px;
+    padding: 7px 12px; font-size: 12.5px; cursor: pointer; color: var(--ink); flex-shrink: 0;
+  }
+  .spec-row .sbtn.stockbtn { color: var(--red); }
+  .stkrow .stk-wait { font-size: 12px; color: var(--sub); }
+  .stkrow .mystk { display: inline; font-size: 13.5px; color: var(--red); font-weight: 700; }
+  .stkrow .mystk.zero { color: var(--sub); font-weight: 400; }
   /* 사용상 주의사항 (스펙 표 아래 접기) */
   .pnotice { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
   .pnotice summary { padding: 12px 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
@@ -463,7 +474,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-19.20";
+const APP_VER = "2026-08-19.21";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1214,15 +1225,33 @@ function grid(items, limit, moreCall) {
 /* ---------- 상세 ---------- */
 // 스펙 표 행 순서 — 제품 코드가 항상 맨 위(정확한 제품명 바로 아래)
 const SPEC_ORDER = ["제품 코드", "소재", "규격", "상세", "원산지", "제조년월", "설명"];
-function specHtml(spec) {
+// 바코드가 하나뿐인 제품(의류 등 다옵션 제외)이면 스펙 표에 합칠 재고 행 정보를 만든다
+function oneBcInfo(p) {
+  if (p.storeOnly || p.colors.length !== 1 || p.colors[0].sizes.length !== 1) return null;
+  const c = p.colors[0], s = c.sizes[0];
+  if (!s.barcode) return null;
+  const rawSz = (s.size === "XXX" || s.size === "FREE") ? "" : s.size;
+  return { bc: s.barcode, lb: (c.color && c.color !== "단품" ? c.color + " · " : "") + (rawSz || "단일") };
+}
+function specHtml(spec, stk) {
   spec = spec || {};
   const keys = Object.keys(spec).sort((a, b) => {
     const ia = SPEC_ORDER.indexOf(a), ib = SPEC_ORDER.indexOf(b);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
-  let h = `<div class="specbox" id="specbox"${keys.length ? "" : ' style="display:none"'}>`;
-  for (const k of keys) h += `<div class="spec-row"><span class="spec-k">${esc(k)}</span><span class="spec-v">${esc(spec[k])}</span></div>`;
-  return h + "</div>";
+  const rows = keys.map(k =>
+    `<div class="spec-row"><span class="spec-k">${esc(k)}</span><span class="spec-v${k === "제품 코드" ? " mono" : ""}">${esc(spec[k])}</span></div>`);
+  if (stk) {
+    // 재고 행은 제품 코드 바로 아래(코드 행이 없으면 맨 위)
+    rows.splice(keys.indexOf("제품 코드") + 1, 0,
+      `<div class="spec-row stkrow" data-bc="${esc(stk.bc)}">
+        <span class="spec-k">재고</span>
+        <span class="spec-v sz"><span class="stk-wait">확인 중…</span></span>
+        <button class="sbtn stockbtn" data-bc="${esc(stk.bc)}" data-lb="${esc(stk.lb)}">재고</button>
+        <button class="sbtn" onclick="copyText('${esc(stk.bc)}', '바코드 복사됨')">복사</button>
+      </div>`);
+  }
+  return `<div class="specbox" id="specbox"${rows.length ? "" : ' style="display:none"'}>${rows.join("")}</div>`;
 }
 // products/view 응답으로 스펙 표 보강 — products.json에 없는 제품 코드·제조년월·설명을 채우고,
 // 사용상 주의는 길어서 표 아래에 접어 붙인다
@@ -1230,12 +1259,14 @@ function applyInfo(p, info) {
   if (!info) return;
   const box = document.getElementById("specbox");
   if (!box) return;
+  const stk = oneBcInfo(p);
   const merged = Object.assign({}, p.spec);
+  if (stk && !merged["제품 코드"]) merged["제품 코드"] = stk.bc;
   if (info.code) merged["제품 코드"] = info.code;
   if (info.maker) merged["제조년월"] = info.maker;
   if (info.content) merged["설명"] = info.content;
-  if (Object.keys(merged).length) {
-    box.outerHTML = specHtml(merged);
+  if (Object.keys(merged).length || stk) {
+    box.outerHTML = specHtml(merged, stk);
   }
   if (info.notice && !$detail.querySelector(".pnotice")) {
     const d = document.createElement("details");
@@ -1261,10 +1292,15 @@ function openDetail(id) {
     <div class="pr">${p.storeOnly ? "🏬 매장 전용 상품 (온라인몰 미취급)" : (p.price ? "판매가 " + p.price.toLocaleString() + "원" : "") + (p.state === "SOLDOUT" ? " · 온라인몰 품절" : "")}</div>
     <button class="copybtn" onclick="copyText(document.getElementById('pname').textContent, '제품명 복사됨')">제품명 복사</button>
   </div>`;
-  html += specHtml(p.spec);
+  // 바코드가 하나뿐이면 하단 바코드 블록 대신 스펙 표에 재고 행으로 합친다(이중 표시 제거)
+  const stk = oneBcInfo(p);
+  const spec = stk && !(p.spec && p.spec["제품 코드"])
+    ? Object.assign({ "제품 코드": stk.bc }, p.spec)  // 구 데이터엔 코드가 없어 바코드로 채움(단일 옵션은 코드=바코드)
+    : p.spec;
+  html += specHtml(spec, stk);
   html += `<div class="warn">⚠ 인트라넷 제품명 검색은 띄어쓰기가 정확해야 합니다. 위 이름을 그대로 복사해서 쓰세요.</div>`;
 
-  for (const c of p.colors) {
+  if (!stk) for (const c of p.colors) {
     const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
     const title = c.color && c.color !== "단품" ? esc(c.color) : "기본";
     html += `<div class="colorblock"><div class="ctitle">${chip}${title}</div>`;
@@ -1311,32 +1347,41 @@ function openDetail(id) {
 async function loadMyStock(p) {
   if (p.storeOnly) return;
   const store = myStore();
-  let g;
-  try { g = GAL_CACHE[p.id] || await fetchGallery(p.id); } catch (e) { return; }
-  if (!g || !g.optMap) return;
-  let fetched = false;
-  for (const rowEl of [...$detail.querySelectorAll(".bcrow[data-bc]")]) {
-    // 다른 제품으로 이동했거나 상세를 닫았으면 중단(닫으면 history 상태가 먼저 바뀐다)
-    if ((history.state || {}).id !== p.id) return;
-    const m = g.optMap[rowEl.dataset.bc];
-    if (!m) continue;
-    try {
-      if (!STOCK_CACHE[m.oid]) {
-        if (fetched) await new Promise(r => setTimeout(r, 250));  // 연속 요청 사이에만 간격(서버 배려)
-        const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(m.oid)}&page=1`,
-          { headers: { Accept: "application/json" } });
-        if (!res.ok) return;
-        STOCK_CACHE[m.oid] = (((await res.json()).data || {}).rows || []);
-        fetched = true;
-      }
-      const mine = STOCK_CACHE[m.oid].find(r => r.id === store.id);
-      const sz = rowEl.querySelector(".sz");
-      if (sz && !sz.querySelector(".mystk")) {
-        const n = mine ? (mine.usable_stock || 0) : null;
-        sz.insertAdjacentHTML("beforeend",
-          `<div class="mystk ${n ? "" : "zero"}">자점 ${n === null ? "?" : (n ? n + "개" : "없음")}</div>`);
-      }
-    } catch (e) { return; }  // 오프라인 등 — 조용히 중단(버튼으로는 재시도 가능)
+  try {
+    let g;
+    try { g = GAL_CACHE[p.id] || await fetchGallery(p.id); } catch (e) { return; }
+    if (!g || !g.optMap) return;
+    let fetched = false;
+    // .bcrow(색상·사이즈 블록)와 .stkrow(스펙 표의 재고 행) 둘 다 채운다
+    for (const rowEl of [...$detail.querySelectorAll(".bcrow[data-bc], .stkrow[data-bc]")]) {
+      // 다른 제품으로 이동했거나 상세를 닫았으면 중단(닫으면 history 상태가 먼저 바뀐다)
+      if ((history.state || {}).id !== p.id) return;
+      const m = g.optMap[rowEl.dataset.bc];
+      if (!m) continue;
+      try {
+        if (!STOCK_CACHE[m.oid]) {
+          if (fetched) await new Promise(r => setTimeout(r, 250));  // 연속 요청 사이에만 간격(서버 배려)
+          const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(m.oid)}&page=1`,
+            { headers: { Accept: "application/json" } });
+          if (!res.ok) return;
+          STOCK_CACHE[m.oid] = (((await res.json()).data || {}).rows || []);
+          fetched = true;
+        }
+        const mine = STOCK_CACHE[m.oid].find(r => r.id === store.id);
+        const sz = rowEl.querySelector(".sz");
+        if (sz && !sz.querySelector(".mystk")) {
+          const wait = sz.querySelector(".stk-wait");
+          if (wait) wait.remove();
+          const n = mine ? (mine.usable_stock || 0) : null;
+          sz.insertAdjacentHTML("beforeend",
+            `<div class="mystk ${n ? "" : "zero"}">자점 ${n === null ? "?" : (n ? n + "개" : "없음")}</div>`);
+        }
+      } catch (e) { return; }  // 오프라인 등 — 조용히 중단(버튼으로는 재시도 가능)
+    }
+  } finally {
+    // 못 채운 "확인 중…"은 안내 문구로 바꿔둔다(오프라인·옵션 매핑 실패 등)
+    if ((history.state || {}).id === p.id)
+      $detail.querySelectorAll(".stk-wait").forEach(el => { el.textContent = "확인 불가 — [재고]를 눌러 재시도"; });
   }
 }
 function closeDetail() { $detail.classList.remove("open"); }
@@ -1432,9 +1477,10 @@ async function loadGallery(p) {
   if (g.detail.length && body && !body.querySelector(".dimgs")) {
     const d = document.createElement("details");
     d.className = "dimgs";
+    // eager+낮은 우선순위: 접힌 상태에서도 미리 내려받아 펼치는 순간 바로 보이게 한다
+    // (lazy는 접힌 details 안에서 로드가 시작되지 않아 펼친 뒤 한참 걸렸음)
     d.innerHTML = `<summary>상세 페이지 이미지 (${g.detail.length})</summary><div class="dbody">` +
-      g.detail.map(u => `<img src="${esc(imgUrl(u, 800))}" loading="lazy" decoding="async" alt="">`).join("") + "</div>";
-    eagerOnOpen(d);
+      g.detail.map(u => `<img src="${esc(imgUrl(u, 800))}" loading="eager" fetchpriority="low" decoding="async" alt="">`).join("") + "</div>";
     const cats = body.querySelector(".d-cats");
     body.insertBefore(d, cats || null);
   }
