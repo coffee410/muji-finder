@@ -507,7 +507,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.44";
+const APP_VER = "2026-08-20.45";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1934,7 +1934,7 @@ async function openScanner() {
       // 잘라 해독한다 — 화소가 1/3로 줄어 시도당 CPU·발열이 크게 줄고(초당 시도↑), 바코드 주변만
       // 이진화하므로 배경(선반·손)에 히스토그램이 끌려가던 문제도 사라진다. 예외를 전부 잡아
       // 루프가 조용히 죽는 일이 없어 워치독도 필요 없다.
-      startScanLoop(video, scanReader, hardReader, onResult);
+      startScanLoop(video, scanReader, hardReader, onResult, await initNativeDetector());
     } else if (typeof scanReader.decodeContinuously === "function") {
       // 이미 재생 중인 비디오에 인식 루프만 붙인다(srcObject 재부착 없음 → 크기 레이스 원천 차단)
       scanReader.decodeContinuously(video, onResult);
@@ -1971,8 +1971,19 @@ async function openScanner() {
 // 자체 크롭 해독 루프 — 화면 중앙(가로 86% × 세로 44%)만 잘라 zxing으로 해독.
 // 평소엔 빠른 리더(TRY_HARDER 없음, 실패 60ms)로 자주 시도하고,
 // 8틱마다 1번 정밀 리더(TRY_HARDER + 2단 이진화)로 흐린 프레임을 구제한다.
+// 안드로이드 크롬 내장 BarcodeDetector(구글 ML 기반) — zxing보다 저대비·흐림·기울기에 훨씬 강함.
+// iOS는 미지원/깨짐(기존 확인)이라 안드로이드에서만 쓰고, 없거나 오류면 zxing 체인으로 폴백.
+async function initNativeDetector() {
+  if (!/Android/.test(navigator.userAgent) || !("BarcodeDetector" in window)) return null;
+  try {
+    const fmts = await window.BarcodeDetector.getSupportedFormats();
+    const want = ["ean_13", "ean_8", "upc_a", "code_128"].filter(f => fmts.includes(f));
+    if (!want.includes("ean_13")) return null;
+    return new window.BarcodeDetector({ formats: want });
+  } catch (e) { return null; }
+}
 let scanLoopStop = null;
-function startScanLoop(video, fastReader, hardReader, onResult) {
+function startScanLoop(video, fastReader, hardReader, onResult, nativeDet) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   // 채널 분리 재시도용 축소 캔버스(아래 주석 참고)
@@ -1989,7 +2000,7 @@ function startScanLoop(video, fastReader, hardReader, onResult) {
     }
     return null;
   };
-  const tick = () => {
+  const tick = async () => {
     if (stopped) return;
     scanLastTick = Date.now();
     if (video.videoWidth && video.readyState >= 2 && !document.hidden) {
@@ -1999,13 +2010,25 @@ function startScanLoop(video, fastReader, hardReader, onResult) {
         if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
         ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, cw, ch);
         const hard = (++n % 8 === 0);
-        let result = decode(hard ? hardReader : fastReader, canvas, hard);
+        let result = null;
+        // 1) 네이티브 인식기(안드로이드) — 컬러 프레임 그대로 인식, 저대비 크라프트지에 가장 강함
+        if (nativeDet) {
+          try {
+            const codes = await nativeDet.detect(canvas);
+            if (!stopped && codes && codes.length && codes[0].rawValue) {
+              const v = codes[0].rawValue;
+              result = { getText: () => v };
+            }
+          } catch (e) { nativeDet = null; }  // 미지원·오류면 이후 zxing만 사용
+        }
+        // 2) zxing 회색조 (기존 경로)
+        if (!result) result = decode(hard ? hardReader : fastReader, canvas, hard);
         if (!result) {
-          // 크라프트지(갈색 포장) 저대비 바코드 구제(2026-08-20, 실물 사진 3장으로 검증):
-          // 적갈색 잉크는 회색조에선 갈색 바탕과 명암이 비슷해 빠른 리더가 전멸한다.
-          // 녹색 채널(적색 잉크가 어둡게 나옴)·적색 채널(검정 잉크 대비 최대)을 틱마다 번갈아,
-          // 800px 축소판(흐림에 더 강하고 픽셀 1/4 이하라 비용 ~30ms)에서 재시도한다.
-          const sw = Math.min(800, cw), sh = Math.round(ch * sw / cw);
+          // 3) 크라프트지(갈색 포장) 저대비 구제(2026-08-20, 실물 사진 검증):
+          // 적갈색 잉크는 회색조에선 갈색 바탕과 명암이 비슷해 일반 경로가 전멸한다.
+          // 녹색(적갈색 잉크가 어둡게)·적색(검정 잉크 대비 최대) 채널을 틱마다 번갈아,
+          // 800px/480px 축소판(강한 축소가 흐림에 상대적으로 강함)을 교대로 재시도. 비용 ~15-30ms.
+          const sw = Math.min(n % 4 < 2 ? 800 : 480, cw), sh = Math.round(ch * sw / cw);
           if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
           sctx.drawImage(canvas, 0, 0, sw, sh);
           const id = sctx.getImageData(0, 0, sw, sh);
@@ -2014,7 +2037,7 @@ function startScanLoop(video, fastReader, hardReader, onResult) {
           sctx.putImageData(id, 0, 0);
           result = decode(hard ? hardReader : fastReader, small, hard);
         }
-        if (result) onResult(result, null);
+        if (result && !stopped) onResult(result, null);
       } catch (e) {}  // drawImage 실패 등 — 다음 틱에서 재시도
     }
     setTimeout(tick, 90);
