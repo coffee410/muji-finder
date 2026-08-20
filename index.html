@@ -336,6 +336,9 @@
   }
   .eduform textarea { line-height: 1.6; resize: vertical; }
   .eduform input:focus, .eduform textarea:focus { border-color: var(--red); }
+  /* 체크박스는 appearance:none을 되돌려야 체크 표시가 그려진다(잠금 체크가 안 보이던 버그) */
+  .eduform input[type=checkbox] { -webkit-appearance: checkbox; appearance: auto;
+    width: 19px; height: 19px; padding: 0; margin: 0; flex-shrink: 0; accent-color: var(--red); }
   /* 비밀번호 입력: 👁 버튼으로 입력 내용 확인 */
   .pwwrap { position: relative; }
   .pwwrap input { padding-right: 48px; box-sizing: border-box; }
@@ -418,6 +421,17 @@
   .ai-th img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; border: 1px solid #d9c8ea; display: block; }
   .ai-th button { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%;
     border: 1px solid #d9c8ea; background: #fff; color: #b0473a; font-size: 10px; line-height: 1; cursor: pointer; padding: 0; }
+  #aiDocs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ai-doc { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #d9c8ea; background: #fff;
+    border-radius: 8px; padding: 6px 8px; font-size: 12px; color: #555; max-width: 100%; }
+  .ai-doc button { border: 0; background: none; color: #b0473a; font-size: 11px; cursor: pointer; padding: 2px; }
+  /* AI가 쓰는 중인 글을 실시간으로 보여주는 창 */
+  #aiLive { background: #fff; border: 1px solid #d9c8ea; border-radius: 10px; padding: 10px 12px;
+    font-size: 12.5px; line-height: 1.55; color: #444; max-height: 190px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word; }
+  .ai-spin { display: inline-block; width: 13px; height: 13px; border: 2px solid #ffffff88;
+    border-top-color: #fff; border-radius: 50%; animation: aispin .8s linear infinite; vertical-align: -2px; }
+  @keyframes aispin { to { transform: rotate(360deg); } }
 
   /* 검색줄 + 스캔 버튼 */
   .searchrow { display: flex; gap: 8px; align-items: stretch; }
@@ -572,7 +586,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.49";
+const APP_VER = "2026-08-20.50";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -617,9 +631,12 @@ async function initEduAI() {
   AI_CTX = { aiMod, ai: aiMod.getAI(app, { backend: new aiMod.GoogleAIBackend() }) };
   return AI_CTX;
 }
-function eduAIPrompt(desc, nPhotos) {
+function eduAIPrompt(desc, nPhotos, nDocs) {
+  const srcs = [];
+  if (nDocs) srcs.push("첨부 문서 " + nDocs + "개");
+  if (nPhotos) srcs.push("첨부 사진 " + nPhotos + "장");
   return `당신은 무인양품(MUJI) 매장 직원 교육자료 작성 도우미입니다.
-아래 요청${nPhotos ? "과 첨부 사진 " + nPhotos + "장" : ""}을 바탕으로 매장 직원용 교육자료를 작성하세요.
+아래 요청${srcs.length ? "과 " + srcs.join("·") : ""}을 바탕으로 매장 직원용 교육자료를 작성하세요.
 
 요청: ${desc}
 
@@ -630,25 +647,48 @@ function eduAIPrompt(desc, nPhotos) {
   - 일반 문장 / "- 목록" / "- [ ] 체크리스트" / "**굵게**"
   - "| 열1 | 열2 |" 표(필요할 때만, 첫 행은 제목 행)
   - "+++ 접기 제목"으로 열고 "+++" 한 줄로 닫는 접기(부가 설명·긴 참고만)
-${nPhotos ? '  - 사진 자리 표시: 정확히 "{{사진1}}" 형식(중괄호 두 겹)만 사용, 반드시 단독 한 줄로. "[사진1]" 등 다른 표기 금지\n  - 첨부한 사진 ' + nPhotos + "장을 각각 그 사진을 설명하는 내용 바로 옆에 정확히 한 번씩 배치(빠뜨리지 말 것)\n" : ""}- 매장 실무에 필요한 내용만 간결하게. 사진 속 라벨·규격·문구를 적극 활용.
+${nDocs ? "- 첨부 문서의 내용을 주된 근거로 삼아 매장 직원이 바로 쓸 수 있게 재구성. 문서에 없는 내용은 지어내지 말 것\n" : ""}${nPhotos ? '  - 사진 자리 표시: 정확히 "{{사진1}}" 형식(중괄호 두 겹)만 사용, 반드시 단독 한 줄로. "[사진1]" 등 다른 표기 금지\n  - 첨부한 사진 ' + nPhotos + "장을 각각 그 사진을 설명하는 내용 바로 옆에 정확히 한 번씩 배치(빠뜨리지 말 것)\n" : ""}- 매장 실무에 필요한 내용만 간결하게. 사진 속 라벨·규격·문구를 적극 활용.
 - 확실하지 않은 정보는 지어내지 말고 "(매장 확인 필요)"로 표시.
 - 본문은 한국어, 존댓말 대신 간결한 개조식.`;
 }
-async function eduAIGenerate(desc, photos) {
+// JSON 파싱(모델이 앞뒤에 군더더기를 붙여도 {} 본문만 건짐)
+function parseAIJson(txt) {
+  try { return JSON.parse(txt); } catch (e) {}
+  const s = txt.indexOf("{"), t = txt.lastIndexOf("}");
+  if (s >= 0 && t > s) return JSON.parse(txt.slice(s, t + 1));
+  throw new Error("empty");
+}
+async function eduAIGenerate(desc, photos, docs, onLive) {
   const { aiMod, ai } = await initEduAI();
   const parts = [];
+  (docs || []).forEach(d => {
+    parts.push({ text: '다음은 참고 문서 "' + d.name + '":' });
+    if (d.text != null) parts.push({ text: d.text });
+    else parts.push({ inlineData: { mimeType: d.mime, data: d.data } });
+  });
   photos.forEach((p, i) => {
     // 라벨이 곧 자리 표시 형식의 본보기가 되도록 {{사진N}} 표기를 그대로 노출
     parts.push({ text: "다음은 본문의 {{사진" + (i + 1) + "}} 자리에 들어갈 사진:" });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: p.split(",")[1] } });
   });
-  parts.push({ text: eduAIPrompt(desc, photos.length) });
+  parts.push({ text: eduAIPrompt(desc, photos.length, (docs || []).length) });
   let lastErr = null;
   for (const m of AI_MODELS) {
     try {
       const model = aiMod.getGenerativeModel(ai, { model: m, generationConfig: { responseMimeType: "application/json" } });
+      // 스트리밍으로 받아 작성 중인 글을 실시간 표시(미지원 환경이면 일반 호출)
+      if (onLive && typeof model.generateContentStream === "function") {
+        const res = await model.generateContentStream(parts);
+        let acc = "";
+        for await (const ch of res.stream) {
+          try { acc += ch.text(); } catch (e2) {}
+          onLive(acc);
+        }
+        const fin = await res.response;
+        return parseAIJson(fin.text());
+      }
       const r = await model.generateContent(parts);
-      return JSON.parse(r.response.text());
+      return parseAIJson(r.response.text());
     } catch (e) {
       lastErr = e;
       // 모델명이 없어진 경우만 다음 모델로. 그 외(할당량·네트워크·App Check)는 바로 알린다
@@ -656,6 +696,19 @@ async function eduAIGenerate(desc, photos) {
     }
   }
   throw lastErr;
+}
+// 스트리밍 중간 JSON에서 사람이 읽을 수 있는 부분만 추출해 보여준다
+function aiLiveText(acc) {
+  const g = k => {
+    const m = acc.match(new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)'));
+    return m ? m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\") : null;
+  };
+  const t = g("title"), d = g("desc"), b = g("body");
+  let out = "";
+  if (t) out += "제목: " + t + "\n";
+  if (d) out += "설명: " + d + "\n";
+  if (b) out += "\n" + b;
+  return out || "생각하는 중…";
 }
 // AI 본문에 i번째 사진을 배치. ① 자리 표시({{사진1}} 외에 [사진1]·(사진 1) 등 변형도 인식) 자리에,
 // ② 자리 표시가 없으면 i번째 소제목 바로 아래(사진은 대개 섹션 순서와 일치), ③ 그것도 없으면 맨 뒤에.
@@ -689,17 +742,55 @@ let AI_PHOTOS = [];  // 압축된 사진 dataURI 목록
 function eduAIToggle() {
   const btn = document.getElementById("ebAIBtn");
   let p = document.getElementById("aipanel");
-  if (p) { p.remove(); AI_PHOTOS = []; if (btn) btn.classList.remove("on"); return; }
+  if (p) { p.remove(); AI_PHOTOS = []; AI_DOCS = []; if (btn) btn.classList.remove("on"); return; }
   p = document.createElement("div");
   p.id = "aipanel";
-  p.innerHTML = `<div class="ai-tag">✨ AI 초안 — 어떤 자료인지 적으면(사진도 좋아요) 초안을 자동으로 써 줍니다</div>
+  p.innerHTML = `<div class="ai-tag">✨ AI 초안 — 어떤 자료인지 적으면(사진·PDF도 좋아요) 초안을 자동으로 써 줍니다</div>
     <textarea id="aiDesc" placeholder="예: 아로마 디퓨저 사용법과 관리 방법 정리. 물세척 금지, 스틱 교체 주기 꼭 포함"></textarea>
-    <div class="ai-row"><button type="button" onclick="eduAIPickPhotos()">📷 사진 첨부 (선택)</button><div id="aiThumbs"></div></div>
+    <div class="ai-row"><button type="button" onclick="eduAIPickPhotos()">📷 사진 첨부</button>
+      <button type="button" onclick="eduAIPickDocs()">📄 문서 첨부 (PDF·텍스트)</button></div>
+    <div id="aiThumbs"></div><div id="aiDocs"></div>
+    <div id="aiLive" style="display:none"></div>
     <div class="ai-row"><button type="button" class="ai-go" id="aiGoBtn" onclick="eduAIGo()">✨ 초안 생성</button><span id="aiStat"></span></div>`;
   document.getElementById("eduBodyArea").before(p);
   btn.classList.add("on");
   document.getElementById("aiDesc").focus();
 }
+/* 문서 첨부: PDF는 그대로(10MB까지), 텍스트(.txt/.md)는 내용으로. 워드(.docx)는 PDF로 저장해서. */
+let AI_DOCS = [];
+function eduAIPickDocs() {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = ".pdf,.txt,.md,application/pdf,text/plain";
+  inp.multiple = true;
+  inp.onchange = async () => {
+    for (const f of [...inp.files]) {
+      if (AI_DOCS.length >= 3) { toast("문서는 최대 3개까지 첨부됩니다"); break; }
+      try { AI_DOCS.push(await readAIDoc(f)); } catch (e) { toast(String(e && e.message || "문서를 읽지 못했습니다")); }
+    }
+    eduAIDocChips();
+  };
+  inp.click();
+}
+async function readAIDoc(f) {
+  const name = f.name || "문서";
+  if (/\.(txt|md)$/i.test(name) || /^text\//.test(f.type || "")) {
+    const text = await f.text();
+    if (text.length > 400000) throw new Error(name + ": 문서가 너무 깁니다(40만 자 이내)");
+    return { name, text };
+  }
+  if (/\.pdf$/i.test(name) || f.type === "application/pdf") {
+    if (f.size > 10 * 1024 * 1024) throw new Error(name + ": PDF는 10MB까지 첨부할 수 있습니다");
+    const buf = await f.arrayBuffer();
+    return { name, mime: "application/pdf", data: b64(buf) };
+  }
+  throw new Error("PDF 또는 텍스트 파일만 첨부할 수 있어요 (워드 파일은 PDF로 저장한 뒤 첨부)");
+}
+function eduAIDocChips() {
+  const box = document.getElementById("aiDocs");
+  if (box) box.innerHTML = AI_DOCS.map((d, i) =>
+    `<span class="ai-doc">📄 ${esc(d.name)}<button type="button" onclick="eduAIDelDoc(${i})" aria-label="문서 빼기">✕</button></span>`).join("");
+}
+function eduAIDelDoc(i) { AI_DOCS.splice(i, 1); eduAIDocChips(); }
 function eduAIPickPhotos() {
   const inp = document.createElement("input");
   inp.type = "file"; inp.accept = "image/*"; inp.multiple = true;
@@ -721,15 +812,25 @@ function eduAIThumbs() {
 }
 function eduAIDelPhoto(i) { AI_PHOTOS.splice(i, 1); eduAIThumbs(); }
 async function eduAIGo() {
-  const desc = ((document.getElementById("aiDesc") || {}).value || "").trim();
-  if (!desc) { toast("어떤 자료인지 설명을 적어주세요"); return; }
+  let desc = ((document.getElementById("aiDesc") || {}).value || "").trim();
+  if (!desc && !AI_DOCS.length) { toast("어떤 자료인지 설명을 적거나 문서를 첨부해 주세요"); return; }
+  if (!desc) desc = "첨부한 문서를 매장 직원용 교육자료로 알기 쉽게 재구성";
   if (!RECAPTCHA_SITE_KEY) { toast("AI 기능이 아직 준비 중입니다"); return; }
   if (getEduBody().trim() && !confirm("지금 쓰여 있는 내용을 AI 초안으로 바꿀까요?")) return;
   const btn = document.getElementById("aiGoBtn"), stat = document.getElementById("aiStat");
+  const live = document.getElementById("aiLive");
   btn.disabled = true;
-  stat.textContent = "초안 생성 중… (10~30초)";
+  btn.innerHTML = '<span class="ai-spin"></span> 작성 중…';
+  stat.textContent = "AI가 초안을 쓰는 중…";
+  if (live) { live.style.display = "block"; live.textContent = "생각하는 중…"; }
   try {
-    const res = await eduAIGenerate(desc, AI_PHOTOS);
+    const res = await eduAIGenerate(desc, AI_PHOTOS, AI_DOCS, acc => {
+      if (!live) return;
+      // 스크롤이 맨 아래에 있을 때만 따라가게(위로 올려 읽는 중이면 유지)
+      const stick = live.scrollTop + live.clientHeight >= live.scrollHeight - 24;
+      live.textContent = aiLiveText(acc);
+      if (stick) live.scrollTop = live.scrollHeight;
+    });
     let body = String(res.body || "").trim();
     if (!body) throw new Error("empty");
     // 첨부 사진을 암호화 저장하고 알맞은 자리에 배치
@@ -751,8 +852,9 @@ async function eduAIGo() {
     toast("초안이 만들어졌습니다 — 내용을 확인·수정하고 저장하세요");
   } catch (e) {
     stat.textContent = "";
+    if (live) live.style.display = "none";
     toast(eduAIErrMsg(e));
-  } finally { btn.disabled = false; }
+  } finally { btn.disabled = false; btn.textContent = "✨ 초안 생성"; }
 }
 async function loadEdu(key) {
   const { db, fs } = await initFirebase();
@@ -1041,11 +1143,12 @@ function renderEduList() {
     const render = docs => {
       const head = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
         // 관리자 모드일 때만 보이는 상태 버튼 — 누르면 관리자 화면(끄기 버튼 있음)으로
-        (isAdmin() ? '<button class="edu-adminchip" onclick=\'nav({view:"admin"})\'>🔓 관리자 켜짐</button>' : '') +
         '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>' +
         (docs.length ? '<input class="edu-search" id="eduSearch" type="search" placeholder="교육자료 검색 (제목·내용)" autocomplete="off">' : '');
       $main.innerHTML = head + '<div id="eduListArea"></div>' +
-        '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.</footer>';
+        '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.' +
+        (isAdmin() ? '<br><button class="edu-adminchip" style="margin-top:9px" onclick=\'nav({view:"admin"})\'>🔓 관리자 켜짐</button>' : '') +
+        '</footer>';
       const area = document.getElementById("eduListArea");
       const card = d => `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
           <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
@@ -1556,7 +1659,7 @@ function renderEduEdit(id) {
       <label>정렬 순서 (작을수록 위, 숫자)</label>
       <input id="eduOrder" type="number" value="${Number(d.order) || 10}">
       ${isAdmin() ? `<label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
-        <input type="checkbox" id="eduLock" style="width:auto" ${(d.lock !== undefined ? d.lock : isNew) ? "checked" : ""}>
+        <input type="checkbox" id="eduLock" ${(d.lock !== undefined ? d.lock : isNew) ? "checked" : ""}>
         🔒 관리자만 수정 가능 (잠금)</label>` : ""}
       <div class="eduform-btns">
         <button class="edu-save" id="eduSaveBtn">저장</button>
@@ -1566,7 +1669,7 @@ function renderEduEdit(id) {
       <div class="warn" style="margin:10px 2px">‘저장’은 모두에게 공유됩니다. ‘임시저장’은 이 기기에만 보관되어 나중에 이어서 쓸 수 있습니다.</div>
     </div>`;
   EB_ID = id;
-  AI_PHOTOS = [];
+  AI_PHOTOS = []; AI_DOCS = [];
   renderEduBodyArea(d.body || "");
   document.getElementById("eduSaveBtn").addEventListener("click", () => saveEdu(id));
   document.getElementById("eduDraftSaveBtn").addEventListener("click", () => saveEduDraft(id));
