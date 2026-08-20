@@ -7,7 +7,7 @@
  *  - 제품 사진(product.mujikorea.co.kr): 캐시 우선 + 최대 900장 제한(초과 시 오래된 것부터 삭제)
  *  - Firebase(교육자료)는 건드리지 않음(온라인 전용)
  */
-const VER = "v3";  // v3: 신형 스캐너(zxing-wasm) 파일 사전 캐시 추가. v2: API 응답 전용 캐시 분리
+const VER = "v4";  // v4: 네트워크 우선 요청에 HTTP 캐시 재검증 강제(no-cache/no-store). v3: zxing-wasm 사전 캐시. v2: API 캐시 분리
 const SHELL = "muji-shell-" + VER;
 const IMGS = "muji-imgs-" + VER;
 const API = "muji-api-" + VER;
@@ -42,7 +42,8 @@ self.addEventListener("activate", e => {
 async function apiNetworkFirst(req) {
   const c = await caches.open(API);
   try {
-    const res = await fetch(req);
+    // no-store: 재고 등 실시간 값이 브라우저 HTTP 캐시에 걸려 낡은 채 오는 것 방지
+    const res = await fetch(req, { cache: "no-store" });
     if (res && res.ok) {
       const body = await res.clone().blob();
       const headers = new Headers(res.headers);
@@ -66,7 +67,9 @@ async function apiNetworkFirst(req) {
 async function networkFirst(req, cacheName) {
   const c = await caches.open(cacheName);
   try {
-    const res = await fetch(req);
+    // no-cache: 서버와 재검증(304면 저렴) — fetch(req)만 쓰면 브라우저 HTTP 캐시의
+    // 옛 파일이 "네트워크 응답"으로 둔갑해 데이터 갱신이 안 보이는 문제가 있었음(2026-08-20)
+    const res = await fetch(req, { cache: "no-cache" });
     if (res && (res.ok || res.type === "opaque")) c.put(req, res.clone());
     return res;
   } catch (err) {
