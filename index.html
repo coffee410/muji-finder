@@ -586,7 +586,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.54";
+const APP_VER = "2026-08-20.55";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1654,16 +1654,20 @@ if (location.hostname === "localhost") (function () {
     setTimeout(() => { el.style.outline = old; el.style.outlineOffset = oldOff; }, 3000);
   };
   const stop = e => { e.preventDefault(); e.stopPropagation(); };
+  const clearBand = () => { if (band) { band.remove(); band = null; } };
   document.addEventListener("pointerdown", e => {
     if (!on || e.target === btn) return;
     stop(e);
+    clearBand();
     sx = e.clientX; sy = e.clientY; moved = false;
     band = document.createElement("div");
     band.style.cssText = "position:fixed;z-index:99998;border:1.5px dashed #e0342f;background:#e0342f18;pointer-events:none";
     document.body.appendChild(band);
   }, true);
   document.addEventListener("pointermove", e => {
-    if (!on || !band) return;
+    if (!band) return;
+    // 버튼이 안 눌린 채 움직이면 pointerup이 유실된 것(Responsively 미러링 등) — 상자 잔류 방지
+    if (!e.buttons || !on) { clearBand(); return; }
     if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 10) moved = true;
     const x = Math.min(sx, e.clientX), y = Math.min(sy, e.clientY);
     band.style.left = x + "px"; band.style.top = y + "px";
@@ -1707,11 +1711,17 @@ if (location.hostname === "localhost") (function () {
     pick.n = window.__PICKS.length + 1;
     pick.scroll = Math.round(scrollY);
     pick.view = (history.state || {}).view || "home";
+    pick.vw = innerWidth; pick.vh = innerHeight;
+    pick.ua = navigator.userAgent.slice(0, 90);
     window.__PICKS.push(pick);
+    // 개발 서버(dev-server.py)로도 전송 — Responsively 등 크롬 밖에서 찍어도 Claude가 파일로 읽음
+    try { fetch("/__pick", { method: "POST", body: JSON.stringify(pick) }).catch(() => {}); } catch (e) {}
     toast("🎯 " + pick.n + "번으로 선택됐습니다 — Claude에게 말하면 이 부분을 고칩니다");
     swallow = true;  // 픽 직후 따라오는 click 이벤트가 앱 버튼을 누르지 않게 1회 삼킴
     setOn(false);
   }, true);
+  document.addEventListener("pointercancel", clearBand, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && (on || band)) { clearBand(); setOn(false); } });
   document.addEventListener("click", e => {
     if (e.target === btn) return;
     if (on || swallow) { stop(e); swallow = false; }
