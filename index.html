@@ -586,7 +586,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.51";
+const APP_VER = "2026-08-20.52";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -773,6 +773,16 @@ function eduAIToggle() {
   btn.classList.add("on");
   document.getElementById("aiDesc").focus();
 }
+/* 첨부 한도: 장수보다 요청 전체 용량이 실제 제약(Gemini 인라인 요청 약 20MB).
+   사진은 압축돼 장당 100~600KB라 20장도 대부분 여유 — 합계 용량으로 관리한다. */
+const AI_MAX_PHOTOS = 20;
+const AI_BUDGET = 15 * 1024 * 1024;  // 사진+문서 base64 합계 안전선(요청 20MB 제한 대비 마진)
+function aiAttachedSize() {
+  let s = 0;
+  AI_PHOTOS.forEach(p => { s += p.length; });
+  AI_DOCS.forEach(d => { s += d.text ? d.text.length : d.data.length; });
+  return s;
+}
 /* 문서 첨부: PDF는 그대로(10MB까지), 텍스트(.txt/.md)는 내용으로. 워드(.docx)는 PDF로 저장해서. */
 let AI_DOCS = [];
 function eduAIPickDocs() {
@@ -782,7 +792,11 @@ function eduAIPickDocs() {
   inp.onchange = async () => {
     for (const f of [...inp.files]) {
       if (AI_DOCS.length >= 3) { toast("문서는 최대 3개까지 첨부됩니다"); break; }
-      try { AI_DOCS.push(await readAIDoc(f)); } catch (e) { toast(String(e && e.message || "문서를 읽지 못했습니다")); }
+      try {
+        const d = await readAIDoc(f);
+        if (aiAttachedSize() + (d.text ? d.text.length : d.data.length) > AI_BUDGET) { toast("첨부 용량 한도에 도달했습니다 (사진·문서 합계)"); break; }
+        AI_DOCS.push(d);
+      } catch (e) { toast(String(e && e.message || "문서를 읽지 못했습니다")); }
     }
     eduAIDocChips();
   };
@@ -812,10 +826,13 @@ function eduAIPickPhotos() {
   const inp = document.createElement("input");
   inp.type = "file"; inp.accept = "image/*"; inp.multiple = true;
   inp.onchange = async () => {
-    const room = 6 - AI_PHOTOS.length;  // 사진 최대 6장(요청 크기 제한)
-    if (inp.files.length > room) toast("사진은 최대 6장까지 첨부됩니다");
-    for (const f of [...inp.files].slice(0, room)) {
-      try { AI_PHOTOS.push(await compressEduImage(f)); } catch (e) { toast("사진을 읽지 못했습니다"); }
+    for (const f of [...inp.files]) {
+      if (AI_PHOTOS.length >= AI_MAX_PHOTOS) { toast("사진은 최대 " + AI_MAX_PHOTOS + "장까지 첨부됩니다"); break; }
+      try {
+        const u = await compressEduImage(f);
+        if (aiAttachedSize() + u.length > AI_BUDGET) { toast("첨부 용량 한도에 도달했습니다 (사진·문서 합계)"); break; }
+        AI_PHOTOS.push(u);
+      } catch (e) { toast("사진을 읽지 못했습니다"); }
     }
     eduAIThumbs();
   };
@@ -1583,9 +1600,12 @@ document.addEventListener("paste", e => {
   if (!file) return;  // 이미지가 아니면 일반 붙여넣기 그대로
   e.preventDefault();
   if (e.target && e.target.id === "aiDesc") {  // AI 패널: 생성용 첨부로
-    if (AI_PHOTOS.length >= 6) { toast("사진은 최대 6장까지 첨부됩니다"); return; }
+    if (AI_PHOTOS.length >= AI_MAX_PHOTOS) { toast("사진은 최대 " + AI_MAX_PHOTOS + "장까지 첨부됩니다"); return; }
     compressEduImage(file)
-      .then(u => { AI_PHOTOS.push(u); eduAIThumbs(); toast("사진이 첨부되었습니다"); })
+      .then(u => {
+        if (aiAttachedSize() + u.length > AI_BUDGET) { toast("첨부 용량 한도에 도달했습니다 (사진·문서 합계)"); return; }
+        AI_PHOTOS.push(u); eduAIThumbs(); toast("사진이 첨부되었습니다");
+      })
       .catch(() => toast("사진을 읽지 못했습니다"));
     return;
   }
