@@ -586,7 +586,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.52";
+const APP_VER = "2026-08-20.53";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -775,7 +775,7 @@ function eduAIToggle() {
 }
 /* 첨부 한도: 장수보다 요청 전체 용량이 실제 제약(Gemini 인라인 요청 약 20MB).
    사진은 압축돼 장당 100~600KB라 20장도 대부분 여유 — 합계 용량으로 관리한다. */
-const AI_MAX_PHOTOS = 20;
+const AI_MAX_PHOTOS = 30;
 const AI_BUDGET = 15 * 1024 * 1024;  // 사진+문서 base64 합계 안전선(요청 20MB 제한 대비 마진)
 function aiAttachedSize() {
   let s = 0;
