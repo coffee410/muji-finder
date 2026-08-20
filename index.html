@@ -586,7 +586,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.53";
+const APP_VER = "2026-08-20.54";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1613,6 +1613,110 @@ document.addEventListener("paste", e => {
   const blk = e.target && e.target.closest ? e.target.closest("[data-ebk]") : null;
   ebInsertImageFile(file, blk ? Number(blk.getAttribute("data-ebk")) : null);
 });
+
+/* ---------- 개발용 화면 선택 도구(🎯) — localhost에서만 표시 ----------
+   개발 PC에서 화면의 요소를 클릭(또는 드래그로 영역 지정)하면 window.__PICKS에
+   해당 요소의 선택자·클래스·텍스트·좌표가 쌓인다. Claude가 이를 읽어
+   "여기 고쳐줘"를 정확한 코드 위치로 해석한다. 배포 사이트(직원)에는 안 보임. */
+if (location.hostname === "localhost") (function () {
+  window.__PICKS = [];
+  const btn = document.createElement("button");
+  btn.textContent = "🎯";
+  btn.title = "화면 선택 모드 (누르고 나서 고칠 부분을 클릭/드래그)";
+  btn.style.cssText = "position:fixed;right:10px;bottom:10px;z-index:99999;width:42px;height:42px;" +
+    "border-radius:50%;border:1px solid #ccc;background:#fff;font-size:18px;opacity:.55;cursor:pointer";
+  document.body.appendChild(btn);
+  let on = false, sx = 0, sy = 0, moved = false, band = null, swallow = false;
+  const setOn = v => { on = v; btn.style.opacity = v ? "1" : ".55"; btn.style.background = v ? "#ffe9e8" : "#fff"; document.body.style.cursor = v ? "crosshair" : ""; };
+  btn.addEventListener("click", e => { e.stopPropagation(); setOn(!on); if (on) toast("🎯 고칠 부분을 클릭하거나 드래그하세요"); });
+  const cssPath = el => {
+    const p = [];
+    while (el && el.nodeType === 1 && p.length < 6) {
+      let s = el.tagName.toLowerCase();
+      if (el.id) { p.unshift(s + "#" + el.id); break; }
+      const c = String(el.className || "").trim().split(/\s+/).filter(Boolean)[0];
+      if (c) s += "." + c;
+      p.unshift(s);
+      el = el.parentElement;
+    }
+    return p.join(" > ");
+  };
+  const info = el => {
+    const r = el.getBoundingClientRect();
+    return { tag: el.tagName.toLowerCase(), id: el.id || "", cls: String(el.className || "").trim(),
+      text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 60), sel: cssPath(el),
+      rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+      html: el.outerHTML.slice(0, 260) };
+  };
+  const flash = el => {
+    const old = el.style.outline, oldOff = el.style.outlineOffset;
+    el.style.outline = "2px solid #e0342f"; el.style.outlineOffset = "-1px";
+    setTimeout(() => { el.style.outline = old; el.style.outlineOffset = oldOff; }, 3000);
+  };
+  const stop = e => { e.preventDefault(); e.stopPropagation(); };
+  document.addEventListener("pointerdown", e => {
+    if (!on || e.target === btn) return;
+    stop(e);
+    sx = e.clientX; sy = e.clientY; moved = false;
+    band = document.createElement("div");
+    band.style.cssText = "position:fixed;z-index:99998;border:1.5px dashed #e0342f;background:#e0342f18;pointer-events:none";
+    document.body.appendChild(band);
+  }, true);
+  document.addEventListener("pointermove", e => {
+    if (!on || !band) return;
+    if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 10) moved = true;
+    const x = Math.min(sx, e.clientX), y = Math.min(sy, e.clientY);
+    band.style.left = x + "px"; band.style.top = y + "px";
+    band.style.width = Math.abs(e.clientX - sx) + "px"; band.style.height = Math.abs(e.clientY - sy) + "px";
+  }, true);
+  document.addEventListener("pointerup", e => {
+    if (!on || !band) return;
+    stop(e);
+    const b = band; band = null;
+    setTimeout(() => b.remove(), moved ? 1500 : 0);
+    let pick;
+    if (!moved) {
+      b.remove();
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (!el || el === btn) { setOn(false); return; }
+      pick = { kind: "요소", at: { x: e.clientX, y: e.clientY }, item: info(el) };
+      flash(el);
+    } else {
+      const rx = Math.min(sx, e.clientX), ry = Math.min(sy, e.clientY);
+      const rw = Math.abs(e.clientX - sx), rh = Math.abs(e.clientY - sy);
+      // 영역에 60% 이상 들어온 요소 중 "가장 바깥" 것들만(안쪽 잔챙이 말고 사람이 의도한 덩어리)
+      const inRegion = r => {
+        if (!r.width || !r.height) return false;
+        const ox = Math.max(0, Math.min(r.right, rx + rw) - Math.max(r.left, rx));
+        const oy = Math.max(0, Math.min(r.bottom, ry + rh) - Math.max(r.top, ry));
+        return (ox * oy) / (r.width * r.height) >= 0.6;
+      };
+      const cand = new Set();
+      for (const el of document.querySelectorAll("body *")) {
+        if (el === btn || el === b) continue;
+        if (inRegion(el.getBoundingClientRect())) cand.add(el);
+      }
+      let outer = [...cand].filter(el => !cand.has(el.parentElement));
+      if (!outer.length) {  // 큰 요소 일부만 드래그한 경우: 영역 중심의 요소 하나
+        const el = document.elementFromPoint(rx + rw / 2, ry + rh / 2);
+        if (el && el !== btn) outer = [el];
+      }
+      pick = { kind: "영역", region: { x: rx, y: ry, w: rw, h: rh }, items: outer.slice(0, 8).map(info) };
+      outer.slice(0, 8).forEach(flash);
+    }
+    pick.n = window.__PICKS.length + 1;
+    pick.scroll = Math.round(scrollY);
+    pick.view = (history.state || {}).view || "home";
+    window.__PICKS.push(pick);
+    toast("🎯 " + pick.n + "번으로 선택됐습니다 — Claude에게 말하면 이 부분을 고칩니다");
+    swallow = true;  // 픽 직후 따라오는 click 이벤트가 앱 버튼을 누르지 않게 1회 삼킴
+    setOn(false);
+  }, true);
+  document.addEventListener("click", e => {
+    if (e.target === btn) return;
+    if (on || swallow) { stop(e); swallow = false; }
+  }, true);
+})();
 function ebTogglePreview() {
   const btn = document.getElementById("ebPvBtn");
   let pv = document.getElementById("eduPreview");
