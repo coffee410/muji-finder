@@ -561,7 +561,7 @@
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-09-30.1";
+const APP_VER = "2026-09-30.2";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -867,7 +867,7 @@ async function eduAIGo() {
 }
 async function loadEdu(key) {
   const { db, fs } = await initFirebase();
-  const snap = await fs.getDocs(fs.query(fs.collection(db, "edu"), fs.orderBy("order")));
+  const snap = await fs.getDocs(fs.query(fs.collection(db, "edu"), fs.where("order", "<", 9000), fs.orderBy("order")));  // 이미지 문서(order 9999)는 받지 않음
   const out = [];
   for (const d of snap.docs) {
     const data = d.data();
@@ -1050,7 +1050,9 @@ function renderEduList(sec) {
       const label = SECS[sec];
       const head = '<div class="edu-head"><div class="sec-title" style="margin:0">' + label + '</div>' +
         // 관리자 모드일 때만 보이는 상태 버튼 — 누르면 관리자 화면(끄기 버튼 있음)으로
-        '<button class="edu-add" onclick=\'nav({view:"eduedit",id:"",sec:"' + sec + '"})\'>+ 새 글</button></div>' +
+        (sec === "weekly"
+          ? '<button class="edu-add" onclick="weeklyPick()">📄 PDF 올리기</button></div>'
+          : '<button class="edu-add" onclick=\'nav({view:"eduedit",id:"",sec:"' + sec + '"})\'>+ 새 글</button></div>') +
         (docs.length ? '<input class="edu-search" id="eduSearch" type="search" placeholder="' + label + ' 검색 (제목·내용)" autocomplete="off">' : '');
       $main.innerHTML = head + '<div id="eduListArea"></div>' +
         '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.' +
@@ -1063,7 +1065,7 @@ function renderEduList(sec) {
         const nq = norm(q);
         // 제목·설명·본문 전체에서 검색(공백 무시). 본문까지 뒤져 원하는 내용 바로 찾기.
         const list = nq ? docs.filter(d => norm(d.title + " " + (d.desc || "") + " " + (d.body || "")).includes(nq)) : docs;
-        if (!docs.length) { area.innerHTML = '<div class="empty">아직 올라온 글이 없습니다.<br>오른쪽 위 “+ 새 글”로 추가해 주세요.</div>'; return; }
+        if (!docs.length) { area.innerHTML = '<div class="empty">아직 올라온 글이 없습니다.<br>오른쪽 위 “' + (sec === "weekly" ? "📄 PDF 올리기" : "+ 새 글") + '”로 추가해 주세요.</div>'; return; }
         if (!list.length) { area.innerHTML = '<div class="empty">"' + esc(q.trim()) + '" 검색 결과가 없습니다.</div>'; return; }
         // 카테고리(cat)별로 묶어서 표시. 검색 중에는 묶지 않고 결과만 나열.
         if (nq || sec !== "edu") { area.innerHTML = list.map(card).join(""); return; }
@@ -1402,7 +1404,7 @@ async function ebUpload(file, k) {
   } finally { EB_UP--; }
 }
 // 암호화 후 Firestore 문서 제한(enc<900000자)에 들어가도록 최대 60만 자 데이터URI로 압축
-async function compressEduImage(file) {
+async function compressEduImage(file, sides = [1400, 1100, 900, 700]) {
   let img = null;
   try { img = await createImageBitmap(file); } catch (e) {}
   if (!img) {
@@ -1417,7 +1419,7 @@ async function compressEduImage(file) {
   if (!W || !H) throw new Error("이미지를 읽을 수 없습니다");
   const cv = document.createElement("canvas");
   const ctx = cv.getContext("2d");
-  for (const maxSide of [1400, 1100, 900, 700]) {
+  for (const maxSide of sides) {
     const s = Math.min(1, maxSide / Math.max(W, H));
     cv.width = Math.max(1, Math.round(W * s));
     cv.height = Math.max(1, Math.round(H * s));
@@ -1439,6 +1441,103 @@ async function saveEduImage(dataUri) {
   if (encrypted.enc.length >= 900000) throw new Error("사진이 너무 큽니다");
   const ref = await fs.addDoc(fs.collection(db, "edu"), { ...encrypted, order: 9999, updatedAt: fs.serverTimestamp() });
   return ref.id;
+}
+/* ---------- 주차지시서 PDF 올리기 ----------
+   카카오워크로 받은 PDF를 고르면 끝: 제목·주차는 PDF 글자에서 읽고, 각 쪽을 사진으로 바꿔
+   암호화 저장한다(원문 보기용). 요약은 나중에 관리자가 Claude로 만들어 이 글 위에 덧붙인다. */
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/";
+function weeklyPick() {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "application/pdf,.pdf";
+  inp.onchange = () => { if (inp.files && inp.files[0]) weeklyUpload(inp.files[0]); };
+  inp.click();
+}
+// pdf.js 글자 조각을 줄 단위로 모아 띄어쓰기 복원(조각 사이 간격이 글자 크기의 15%↑면 공백)
+function pdfPageText(tc) {
+  const items = tc.items.filter(i => i.str && i.str.trim());
+  items.sort((a, b) => (b.transform[5] - a.transform[5]) || (a.transform[4] - b.transform[4]));
+  const lines = [];
+  for (const it of items) {
+    const y = it.transform[5], h = Math.abs(it.transform[3]) || 10;
+    let ln = lines.find(l => Math.abs(l.y - y) < h * 0.5);
+    if (!ln) { ln = { y, parts: [] }; lines.push(ln); }
+    ln.parts.push(it);
+  }
+  return lines.map(l => {
+    l.parts.sort((a, b) => a.transform[4] - b.transform[4]);
+    let out = "", end = null;
+    for (const it of l.parts) {
+      const h = Math.abs(it.transform[3]) || 10;
+      if (end !== null && it.transform[4] - end > h * 0.15) out += " ";
+      out += it.str; end = it.transform[4] + it.width;
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }).join("\n");
+}
+// "9월3주주차지시" · "9월14일~9월20일" · "2026년09월15일"에서 제목·정렬값 만들기
+function weeklyMeta(text, fname) {
+  const t = text.replace(/\s+/g, "");
+  const wk = t.match(/(\d{1,2})월(\d)주/);
+  const rg = t.match(/(\d{1,2})월(\d{1,2})일~(\d{1,2})월(\d{1,2})일/);
+  const yr = (t.match(/(20\d{2})년/) || [])[1] || String(new Date().getFullYear());
+  const title = wk
+    ? `${wk[1]}월 ${wk[2]}주 주차지시서` + (rg ? ` (${rg[1]}/${rg[2]}~${rg[3]}/${rg[4]})` : "")
+    : fname.replace(/\.pdf$/i, "");
+  const p2 = n => String(n).padStart(2, "0");
+  const order = rg ? -Number(yr + p2(rg[1]) + p2(rg[2]))
+    : -Number(new Date().toLocaleDateString("sv").replaceAll("-", ""));
+  return { title, order };
+}
+async function weeklyUpload(file) {
+  if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") { toast("PDF 파일만 올릴 수 있습니다"); return; }
+  if (file.size > 30 * 1024 * 1024) { toast("30MB 이하 PDF만 올릴 수 있습니다"); return; }
+  const key = await ensureEduKey();
+  if (!key) { renderEduPw("list"); return; }
+  const st = msg => { $main.innerHTML = '<div class="loading">' + esc(msg) + '<br><span style="font-size:12px">화면을 닫지 말고 기다려 주세요</span></div>'; };
+  try {
+    st("PDF 읽는 중…");
+    const pdfjs = await import(PDFJS + "pdf.min.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.mjs";
+    const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+    const texts = [];
+    for (let i = 1; i <= pdf.numPages; i++) texts.push(pdfPageText(await (await pdf.getPage(i)).getTextContent()));
+    const meta = weeklyMeta(texts.slice(0, 2).join("\n"), file.name);
+    // 같은 주차가 이미 있으면 새로 만들지 않고 그 글을 연다
+    const docs = await loadEdu(key);
+    const dup = docs.find(d => secOf(d.cat) === "weekly" && d.title.split(" (")[0] === meta.title.split(" (")[0]);
+    if (dup) { toast("이미 올라온 주차지시서입니다"); nav({ view: "edudoc", id: dup.id }); return; }
+    const ids = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      st(`원문 올리는 중… (${i}/${pdf.numPages}쪽)`);
+      const page = await pdf.getPage(i);
+      const vp1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: 1800 / Math.max(vp1.width, vp1.height) });
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+      // intent "print": 화면 새로고침(rAF)을 기다리지 않아 화면이 꺼지거나 백그라운드여도 멈추지 않음
+      await page.render({ canvasContext: ctx, viewport: vp, intent: "print" }).promise;
+      ids.push(await saveEduImage(await compressEduImage(cv, [1800, 1500, 1300, 1100, 900])));
+    }
+    st("저장하는 중…");
+    const body = "요약은 준비되는 대로 이 위에 추가됩니다. 아래는 원문입니다.\n\n" +
+      ids.map((id, i) => `![${i + 1}쪽](eimg:${id})`).join("\n");
+    // srcText: 쪽별 글자(요약 작성용), pages: 원문 사진 문서 id
+    const payload = { title: meta.title, desc: `원문 ${ids.length}쪽 · 요약 준비 중`, cat: SECS.weekly, body,
+      lock: true, pages: ids, srcText: texts };
+    const { db, fs } = await initFirebase();
+    const ref = await fs.addDoc(fs.collection(db, "edu"),
+      { ...(await encryptObj(key, payload)), order: meta.order, updatedAt: fs.serverTimestamp() });
+    EDU = null;
+    toast("올렸습니다");
+    history.replaceState({ view: "edu", sec: "weekly" }, "", "#");
+    nav({ view: "edudoc", id: ref.id });
+  } catch (e) {
+    console.error(e);
+    toast("올리기 실패: " + ((e && (e.code || e.message)) || "오류"));
+    route();
+  }
 }
 /* 마크다운(고급) 모드에서도 같은 방식으로 사진을 넣을 수 있게 */
 function mdPickImage() {
