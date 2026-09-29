@@ -6,11 +6,11 @@
 <meta name="theme-color" content="#7f0019">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="MUJI 찾기">
+<meta name="apple-mobile-web-app-title" content="MUJI 게시판">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
-<title>MUJI 제품 찾기</title>
+<title>MUJI 매장 게시판</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   :root {
@@ -545,48 +545,23 @@
 <body>
 <header>
   <div class="brand">
-    <h1><b>MUJI</b> 제품 찾기</h1>
-    <span class="upd" id="upd"></span>
+    <h1><b>MUJI</b> 매장 게시판</h1>
   </div>
   <nav class="tabs">
-    <button id="tabFind" class="on" onclick="goTab('find')">제품 찾기</button>
-    <button id="tabEdu" onclick="goTab('edu')">교육자료</button>
+    <button id="tab_weekly" class="on" onclick="goTab('weekly')">주차지시서</button>
+    <button id="tab_notice" onclick="goTab('notice')">공지사항</button>
+    <button id="tab_edu" onclick="goTab('edu')">교육자료</button>
   </nav>
-  <div class="searchrow" id="searchrow">
-    <div class="searchwrap">
-      <input id="q" type="search" placeholder="제품명, 초성, 바코드, 수입 품번" autocomplete="off">
-      <button id="clearq" aria-label="지우기">✕</button>
-    </div>
-    <button id="scanbtn" onclick="openScanner()" aria-label="바코드 스캔">📷</button>
-  </div>
-  <div class="hint" id="searchhint">띄어쓰기 몰라도 검색됩니다 · 초성만 쳐도 OK · 📷로 바코드 스캔</div>
 </header>
 
-<main id="main"><div class="loading">제품 데이터 불러오는 중…</div></main>
-
-<div id="detail"></div>
-<div id="viewer"><div class="vstrip"></div><button class="vclose" onclick="history.back()">✕</button><div class="vcnt"></div></div>
-<div id="stocksheet"><div class="ss-panel"></div></div>
-
-<div id="scanner">
-  <div class="scan-head">
-    <button onclick="closeScanner()">✕ 닫기</button>
-    <span>바코드를 네모 칸 안에 맞춰주세요</span>
-    <button id="scanzoom" style="display:none;margin-left:auto" aria-label="카메라 줌">1×</button>
-  </div>
-  <video id="scanvideo" playsinline muted></video>
-  <div class="scan-mask"></div>
-  <div class="scan-frame"></div>
-  <div id="scanresult"></div>
-  <div class="scan-msg" id="scanmsg">바코드를 인식하면 자동으로 제품을 찾습니다</div>
-</div>
+<main id="main"><div class="loading">불러오는 중…</div></main>
 
 <div id="toast"></div>
 
 <script>
 "use strict";
 // 홈 footer에 표시되는 앱 버전. 배포할 때마다 올린다 — 폰에서 옛 버전 캐시가 남았는지 확인용.
-const APP_VER = "2026-08-20.55";
+const APP_VER = "2026-09-30.1";
 
 /* ---------- Firebase (교육자료 실시간 공유) ---------- */
 const firebaseConfig = {
@@ -1025,106 +1000,27 @@ async function decryptObj(key, doc) {
   return JSON.parse(new TextDecoder().decode(pt));
 }
 
-let DB = null;          // 전체 데이터
-let PRODUCTS = [];      // 검색 인덱스 포함 제품 배열
-let CATTREE = {};       // top -> mid -> [{leafPath, count}]
+let PRODUCTS = [];      // 제품 데이터는 제거됨(2026-09-30). 옛 교육자료의 제품 카드(@p) 호환용 빈 배열
 const $main = document.getElementById("main");
-const $detail = document.getElementById("detail");
-const $q = document.getElementById("q");
-const $clearq = document.getElementById("clearq");
 
 /* ---------- 한글 유틸 ---------- */
-const CHO = ["ㄱ","ㄲ","ㄴ","ㄷ","ㄸ","ㄹ","ㅁ","ㅂ","ㅃ","ㅅ","ㅆ","ㅇ","ㅈ","ㅉ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"];
-function chosung(str) {
-  let out = "";
-  for (const ch of str) {
-    const c = ch.codePointAt(0);
-    if (c >= 0xAC00 && c <= 0xD7A3) out += CHO[Math.floor((c - 0xAC00) / 588)];
-    else out += ch;
-  }
-  return out;
-}
 // 검색 비교용 정규화: 공백·중점(ㆍ·・ 세 종류 모두)·괄호류 제거 + 소문자
 function norm(str) {
   return (str || "").toLowerCase().replace(/[\sㆍ·・()\[\]\-_,./]/g, "");
 }
-function isChosungQuery(s) { return /^[ㄱ-ㅎ]+$/.test(s); }
 
-/* ---------- 데이터 로드 ---------- */
-// products.json(온라인 수집) + extra.json(매장 전용 수동 등록)을 함께 읽어 합친다.
-Promise.all([
-  fetch("./data/products.json").then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }),
-  fetch("./data/extra.json").then(r => r.ok ? r.json() : []).catch(() => []),
-]).then(([db, extra]) => init(db, extra))
-  .catch(e => {
-    $main.innerHTML = '<div class="empty">데이터를 불러오지 못했습니다.<br>' + e + "</div>";
-  });
-
-// extra.json의 간단한 항목을 앱 내부 제품 구조로 변환
-function extraToProduct(item, i) {
-  const bc = (item.barcode || "").trim();
-  return {
-    id: "x" + i,
-    name: item.name || "(이름 없음)",
-    price: item.price || null,
-    state: "ON",
-    cats: [item.cat && item.cat.trim() ? item.cat.trim() : "매장 전용 상품"],
-    colors: [{
-      color: "단품", img: null, imgs: [],
-      sizes: bc ? [{ size: "", barcode: bc, state: "ON" }] : [],
-    }],
-    storeOnly: true,
-  };
+/* ---------- 시작 ---------- */
+// 제품 찾기(검색·상세·재고·스캔)는 매장 단말기 지급으로 2026-09-30 제거 — 복원은 git 태그 product-finder-final.
+// 탭: 주차지시서 · 공지사항 · 교육자료. 셋 다 같은 Firestore edu 컬렉션(암호화)을 쓰고 cat으로 나눈다.
+const SECS = { weekly: "주차지시서", notice: "공지사항", edu: "교육자료" };
+function secOf(cat) {
+  cat = (cat || "").trim();
+  return cat === SECS.weekly ? "weekly" : cat === SECS.notice ? "notice" : "edu";
 }
-
-function init(db, extra) {
-  DB = db;
-  const extraProducts = (Array.isArray(extra) ? extra : []).map(extraToProduct);
-  const allProducts = db.products.concat(extraProducts);
-  const totalCount = db.count + extraProducts.length;
-  document.getElementById("upd").textContent = db.updated + " 기준 · " + totalCount.toLocaleString() + "개";
-  PRODUCTS = allProducts.map(p => {
-    const barcodes = [];
-    for (const c of p.colors) for (const s of c.sizes) barcodes.push(s.barcode);
-    return {
-      ...p,
-      _n: norm(p.name),
-      _c: chosung(norm(p.name)),
-      _b: barcodes.join(" "),
-      _k: ((p.spec || {})["제품 코드"] || "").toLowerCase(),  // 제품 코드·수입 품번(예: AC24HA6A) 검색용
-      _img: firstImg(p),
-    };
-  });
-  buildCatTree();
-  route();
-  // 스캐너 라이브러리(구형 360KB + 신형 wasm 975KB)를 한가할 때 미리 받아둔다 → 첫 스캔부터 빠르게
-  if (navigator.mediaDevices && window.isSecureContext) {
-    setTimeout(() => { loadZxing().catch(() => {}); loadZxingWasm(); }, 2500);
-  }
-  // PWA: 서비스 워커 등록(오프라인 캐시 — 앱 셸·데이터·본 사진). 실패해도 앱 동작엔 영향 없음.
-  if ("serviceWorker" in navigator) {
-    setTimeout(() => navigator.serviceWorker.register("./sw.js").catch(() => {}), 1500);
-  }
-}
-function firstImg(p) {
-  // 실제 제품 사진(imgs)을 우선하고, 없을 때만 색상 칩(img·원단 확대컷)을 쓴다
-  for (const c of p.colors) if (c.imgs && c.imgs[0]) return c.imgs[0];
-  for (const c of p.colors) if (c.img) return c.img;
-  return null;
-}
-function buildCatTree() {
-  CATTREE = {};
-  for (const p of PRODUCTS) {
-    for (const cat of p.cats) {
-      const parts = cat.split(" > ");
-      const top = parts[0] || "기타";
-      const mid = parts.length >= 3 ? parts[1] : (parts[1] || "전체");
-      if (!CATTREE[top]) CATTREE[top] = {};
-      if (!CATTREE[top][mid]) CATTREE[top][mid] = {};
-      if (!CATTREE[top][mid][cat]) CATTREE[top][mid][cat] = 0;
-      CATTREE[top][mid][cat]++;
-    }
-  }
+setTimeout(route, 0);
+// PWA: 서비스 워커 등록(오프라인 캐시). 실패해도 앱 동작엔 영향 없음.
+if ("serviceWorker" in navigator) {
+  setTimeout(() => navigator.serviceWorker.register("./sw.js").catch(() => {}), 1500);
 }
 
 /* ---------- 라우팅 (뒤로가기 지원) ---------- */
@@ -1132,57 +1028,34 @@ window.addEventListener("popstate", route);
 function nav(state) { history.pushState(state, "", "#"); route(); }
 function route() {
   const s = history.state || {};
-  // 사진 크게 보기·재고 시트가 열려 있으면 뒤로가기는 그것만 닫는다(상세 화면은 그대로 유지)
-  if (VIEWER_OPEN) {
-    closeViewer();
-    if (!s.viewer && s.view === "product" && $detail.classList.contains("open")) return;
-  }
-  if (STOCK_OPEN) {
-    closeStock();
-    if (!s.stock && s.view === "product" && $detail.classList.contains("open")) return;
-  }
-  closeDetail();
-  // 본문 화면이 바뀔 때 짧은 페이드 전환(제품 상세는 오버레이가 자체 슬라이드)
-  if (s.view !== "product") {
-    $main.classList.remove("vin"); void $main.offsetWidth; $main.classList.add("vin");
-  }
+  $main.classList.remove("vin"); void $main.offsetWidth; $main.classList.add("vin");
   if (s.view === "admin") { renderAdminPw(); return; }
-  if (s.view === "edu") { renderEduList(); return; }
   if (s.view === "edudoc") { renderEduDoc(s.id); return; }
   if (s.view === "eduedit") { renderEduEdit(s.id); return; }
-  setTab("find");
-  if (s.view === "product") { openDetail(s.id); return; }
-  if (s.view === "cat") { renderCat(s.top); return; }
-  if (s.view === "leaf") { renderLeaf(s.leaf); return; }
-  if ($q.value.trim()) { renderSearch($q.value); return; }
-  renderHome();
+  renderEduList(SECS[s.sec] ? s.sec : "weekly");  // 첫 화면 = 주차지시서
 }
 function setTab(which) {
-  document.getElementById("tabFind").classList.toggle("on", which === "find");
-  document.getElementById("tabEdu").classList.toggle("on", which === "edu");
-  const show = which === "find" ? "" : "none";
-  document.getElementById("searchrow").style.display = show === "" ? "flex" : "none";
-  document.getElementById("searchhint").style.display = show;
+  for (const k in SECS) document.getElementById("tab_" + k).classList.toggle("on", k === which);
 }
-function goTab(which) {
-  if (which === "edu") nav({ view: "edu" });
-  else { history.pushState({}, "", "#"); route(); }
-}
+function goTab(which) { nav({ view: "edu", sec: which }); }
 
 /* ---------- 교육자료 (Firebase 실시간 공유) ---------- */
-function renderEduList() {
-  setTab("edu");
+function renderEduList(sec) {
+  sec = sec || "weekly";
+  setTab(sec);
   ensureEduKey().then(key => {
     if (!key) { renderEduPw("list"); return; }
-    const render = docs => {
-      const head = '<div class="edu-head"><div class="sec-title" style="margin:0">교육자료</div>' +
+    const render = all => {
+      const docs = all.filter(d => secOf(d.cat) === sec);
+      const label = SECS[sec];
+      const head = '<div class="edu-head"><div class="sec-title" style="margin:0">' + label + '</div>' +
         // 관리자 모드일 때만 보이는 상태 버튼 — 누르면 관리자 화면(끄기 버튼 있음)으로
-        '<button class="edu-add" onclick=\'nav({view:"eduedit",id:""})\'>+ 새 자료</button></div>' +
-        (docs.length ? '<input class="edu-search" id="eduSearch" type="search" placeholder="교육자료 검색 (제목·내용)" autocomplete="off">' : '');
+        '<button class="edu-add" onclick=\'nav({view:"eduedit",id:"",sec:"' + sec + '"})\'>+ 새 글</button></div>' +
+        (docs.length ? '<input class="edu-search" id="eduSearch" type="search" placeholder="' + label + ' 검색 (제목·내용)" autocomplete="off">' : '');
       $main.innerHTML = head + '<div id="eduListArea"></div>' +
         '<footer>🔒 내용은 암호화되어 저장됩니다. 비밀번호를 아는 직원만 열람·편집할 수 있어요.' +
         (isAdmin() ? '<br><button class="edu-adminchip" style="margin-top:9px" onclick=\'nav({view:"admin"})\'>🔓 관리자 켜짐</button>' : '') +
-        '</footer>';
+        '<br><span class="ver">v' + APP_VER + '</span><span class="adminlink" onclick=\'nav({view:"admin"})\'>·</span></footer>';
       const area = document.getElementById("eduListArea");
       const card = d => `<button class="edu-card" onclick='nav({view:"edudoc",id:${JSON.stringify(d.id)}})'>
           <div class="t">${esc(d.title)}</div><div class="d">${esc(d.desc || "")}</div></button>`;
@@ -1190,10 +1063,10 @@ function renderEduList() {
         const nq = norm(q);
         // 제목·설명·본문 전체에서 검색(공백 무시). 본문까지 뒤져 원하는 내용 바로 찾기.
         const list = nq ? docs.filter(d => norm(d.title + " " + (d.desc || "") + " " + (d.body || "")).includes(nq)) : docs;
-        if (!docs.length) { area.innerHTML = '<div class="empty">아직 등록된 자료가 없습니다.<br>오른쪽 위 “+ 새 자료”로 추가해 주세요.</div>'; return; }
+        if (!docs.length) { area.innerHTML = '<div class="empty">아직 올라온 글이 없습니다.<br>오른쪽 위 “+ 새 글”로 추가해 주세요.</div>'; return; }
         if (!list.length) { area.innerHTML = '<div class="empty">"' + esc(q.trim()) + '" 검색 결과가 없습니다.</div>'; return; }
         // 카테고리(cat)별로 묶어서 표시. 검색 중에는 묶지 않고 결과만 나열.
-        if (nq) { area.innerHTML = list.map(card).join(""); return; }
+        if (nq || sec !== "edu") { area.innerHTML = list.map(card).join(""); return; }
         const groups = [];
         for (const d of list) {
           const c = (d.cat || "").trim() || "기타";
@@ -1217,7 +1090,8 @@ function renderEduList() {
       render(EDU);
       loadEdu(key).then(docs => {
         const se = document.getElementById("eduSearch");
-        if ((history.state || {}).view === "edu" && sig(docs) !== before && !(se && se.value)) render(docs);
+        const st = history.state || {};
+        if ((st.view || "edu") === "edu" && (st.sec || "weekly") === sec && sig(docs) !== before && !(se && se.value)) render(docs);
       }).catch(() => {});
       return;
     }
@@ -1228,7 +1102,7 @@ function renderEduList() {
   });
 }
 function renderEduDoc(id) {
-  setTab("edu");
+  setTab(secOf(((EDU || []).find(x => x.id === id) || {}).cat));
   ensureEduKey().then(key => {
     if (!key) { renderEduPw("list"); return; }
     const draw = d => {
@@ -1765,7 +1639,6 @@ function renderEduBodyArea(body) {
         <button type="button" onclick="ebAdd('p')">＋ 글</button>
         <button type="button" onclick="ebAdd('img')">＋ 사진</button>
         <button type="button" onclick="ebAdd('h')">＋ 소제목</button>
-        <button type="button" onclick="ebAdd('prod')">＋ 제품 카드</button>
         <button type="button" onclick="ebAdd('hr')">＋ 구분선</button>
       </div>`;
     renderBlocks();
@@ -1773,7 +1646,8 @@ function renderEduBodyArea(body) {
   }
 }
 function renderEduEdit(id) {
-  setTab("edu");
+  const newSec = (history.state || {}).sec || "edu";
+  setTab(id ? secOf(((EDU || []).find(x => x.id === id) || {}).cat) : newSec);
   if (!eduAuthed()) { renderEduPw(id); return; }
   // 새로고침 직후 등 캐시가 없으면 먼저 불러와 잠금 여부부터 확인(주소 직접 진입으로 우회 방지)
   if (id && !EDU) {
@@ -1781,7 +1655,9 @@ function renderEduEdit(id) {
     ensureEduKey().then(key => loadEdu(key).then(() => renderEduEdit(id)).catch(() => renderEduList()));
     return;
   }
-  const server = (EDU && EDU.find(x => x.id === id)) || { title: "", desc: "", body: "", order: 10, cat: "" };
+  const server = (EDU && EDU.find(x => x.id === id)) || { title: "", desc: "", body: "", cat: newSec === "edu" ? "" : SECS[newSec],
+    // 주차지시서·공지사항 새 글은 -YYYYMMDD(오늘)로 최신 글이 맨 위
+    order: newSec === "edu" ? 10 : -Number(new Date().toLocaleDateString("sv").replaceAll("-", "")) };
   if (server.lock && !isAdmin()) { toast("🔒 관리자만 수정할 수 있는 자료입니다"); history.back(); return; }
   const draft = loadEduDraft(id);
   const d = draft || server;
@@ -1789,7 +1665,7 @@ function renderEduEdit(id) {
   // 이미 쓰이는 카테고리를 추천 목록으로 제공
   const cats = [...new Set((EDU || []).map(x => (x.cat || "").trim()).filter(Boolean))];
   $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button>
-    <span class="path">${isNew ? "새 교육자료" : "자료 편집"}</span></div>
+    <span class="path">${isNew ? "새 " + SECS[newSec] : "글 편집"}</span></div>
     <div class="eduform">
       ${draft ? `<div class="edu-draft">✎ 임시저장한 내용을 불러왔습니다.
         <button id="eduDraftClear">임시저장 버리기</button></div>` : ""}
@@ -1837,13 +1713,16 @@ function renderEduEdit(id) {
   window.scrollTo(0, 0);
 }
 function renderEduPw(next) {
-  setTab("edu");
-  $main.innerHTML = `<div class="crumb"><button class="back" onclick="history.back()">← 취소</button><span class="path">교육자료 비밀번호</span></div>
+  const st = history.state || {};
+  setTab(st.view === "eduedit" ? (st.sec || "edu") : SECS[st.sec] ? st.sec : st.view ? "edu" : "weekly");
+  // 첫 화면(주소로 바로 진입)에선 돌아갈 곳이 없으니 취소 버튼 숨김
+  const backBtn = st.view ? '<button class="back" onclick="history.back()">← 취소</button>' : "";
+  $main.innerHTML = `<div class="crumb">${backBtn}<span class="path">매장 비밀번호</span></div>
     <div class="eduform">
       <label>매장 공용 비밀번호를 입력하세요</label>
       ${pwField("eduPw", "비밀번호")}
       <div class="eduform-btns"><button class="edu-save" id="eduPwBtn">확인</button></div>
-      <div class="warn" style="margin:8px 2px">🔒 교육자료는 암호화되어 있어 비밀번호가 있어야 열람·편집할 수 있습니다.</div>
+      <div class="warn" style="margin:8px 2px">🔒 게시글은 암호화되어 있어 매장 비밀번호가 있어야 볼 수 있습니다.</div>
     </div>`;
   const inp = document.getElementById("eduPw");
   document.getElementById("eduPwBtn").addEventListener("click", () => submitEduPw(next));
@@ -1856,7 +1735,7 @@ async function submitEduPw(next) {
   if (await sha256hex(pw) === EDU_PW_HASH) {
     sessionStorage.setItem("eduPw", pw);
     eduKey = await deriveKey(pw);
-    if (next === "list") { history.pushState({ view: "edu" }, "", "#"); route(); }
+    if (next === "list") route();  // 보려던 화면(목록·문서) 다시 그리기
     else renderEduEdit(next);  // "" 신규 또는 기존 문서 id
   } else {
     toast("비밀번호가 맞지 않습니다");
@@ -1909,7 +1788,7 @@ async function deleteEdu(id) {
     await fs.setDoc(fs.doc(db, "edu", id), { ...encrypted, order: (server && Number(server.order)) || 999, updatedAt: fs.serverTimestamp() });
     EDU = null;
     toast("삭제되었습니다");
-    history.pushState({ view: "edu" }, "", "#"); route();
+    history.pushState({ view: "edu", sec: secOf(server && server.cat) }, "", "#"); route();
   } catch (e) {
     toast("삭제 실패: " + (e && e.code || "오류"));
   }
@@ -1958,7 +1837,7 @@ function md2html(src) {
       const bc = m[1];
       const prod = (typeof PRODUCTS !== "undefined") &&
         PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === bc)));
-      const nm = (m[2] || "").trim() || (prod ? prod.name : "(앱 데이터에 없는 제품)");
+      const nm = (m[2] || "").trim() || (prod ? prod.name : "제품 바코드 (탭하면 복사)");
       const im = prod && prod._img ? `<img src="${esc(imgUrl(prod._img, 100))}" loading="lazy" alt="">` : '<span class="doc-prow-noimg"></span>';
       const pr = prod && prod.price ? ` · ${prod.price.toLocaleString()}원` : "";
       html += `<div class="doc-prow" onclick="openByBarcode('${bc}')">${im}
@@ -1999,682 +1878,10 @@ function md2html(src) {
   return html;
 }
 
-/* ---------- 검색 ---------- */
-let searchTimer = null;
-$q.addEventListener("input", () => {
-  $clearq.style.display = $q.value ? "block" : "none";
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    if ($q.value.trim()) renderSearch($q.value);
-    else renderHome();
-  }, 120);
-});
-$clearq.addEventListener("click", () => { $q.value = ""; $clearq.style.display = "none"; renderHome(); $q.focus(); });
+// 교육자료의 제품 카드·[이름](p:바코드) → 바코드 복사(단말기 재고조회에 붙여넣기)
+function openByBarcode(bc) { copyText(bc, "바코드 복사됨: " + bc); }
 
-function doSearch(qRaw) {
-  // 공백으로 나눈 단어들을 모두 포함(AND)하는 제품을 찾는다.
-  // 단어별로: 숫자 → 바코드, 초성만 → 초성 매칭, 그 외 → 제품명(공백 무시) 매칭
-  const tokens = qRaw.trim().split(/\s+/).map(norm).filter(Boolean);
-  if (!tokens.length) return [];
-  const results = [];
-  for (const p of PRODUCTS) {
-    let score = 0, ok = true;
-    for (const t of tokens) {
-      let idx;
-      if (/^\d{4,}$/.test(t)) idx = p._b.indexOf(t);
-      else if (isChosungQuery(t)) idx = p._c.indexOf(t);
-      else if (/^[a-z0-9]{4,}$/.test(t) && /[a-z]/.test(t) && /\d/.test(t)) {
-        // 영문+숫자 조합 → 수입 품번/제품 코드 우선, 없으면 제품명
-        idx = p._k.indexOf(t);
-        if (idx < 0) idx = p._n.indexOf(t);
-      } else idx = p._n.indexOf(t);
-      if (idx < 0) { ok = false; break; }
-      score += idx;
-    }
-    if (ok) results.push([score, p]);
-  }
-  results.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length);
-  return results.map(r => r[1]);
-}
-
-/* ---------- 외부 바로가기 링크 ----------
-   ※ MUJI KR 앱(com.muji) 자동 실행은 불가 — 앱에 외부 진입용 딥링크(browsable intent filter,
-   assetlinks.json)가 전혀 없어 intent·커스텀 스킴이 어떤 환경에서도 앱을 못 연다(2026-08-19 실기기 확인).
-   그래서 전부 온라인몰 웹으로 연결한다(앱과 내용 동일). */
-// 네이버 스토어 검색어 정리: 특수문자나 숫자 치수(예: 225~250)가 섞이면 검색이 안 됨(2026-08-19 사용자 확인)
-// → 특수문자는 공백으로, 숫자가 든 토큰(치수·규격류)은 통째로 제거. 전부 지워지면 특수문자만 뺀 원본 사용.
-// 가구 등 제품명 끝에 색상이 붙은 경우(예: "… 소파 1인용 베이지/브라운")도 검색이 안 됨
-// → 그 제품의 색상명(colors)과 일치하는 꼬리 단어를 제거(끝에서부터만, 최소 1단어는 남김).
-function naverQuery(name, colors) {
-  const base = name.replace(/[^0-9A-Za-z가-힣ㄱ-ㅎ\s]/g, " ");
-  const words = base.split(/\s+/).filter(w => w && !/\d/.test(w));
-  const cset = new Set();
-  for (const c of colors || [])
-    for (const t of (c.color || "").split(/[^0-9A-Za-z가-힣]+/)) if (t) cset.add(t);
-  while (words.length > 1 && cset.has(words[words.length - 1])) words.pop();
-  return words.length ? words.join(" ") : base.replace(/\s+/g, " ").trim();
-}
-
-/* ---------- 화면 렌더 ---------- */
-function renderHome() {
-  if (!DB) return;
-  const tops = Object.keys(CATTREE);
-  let html = '<div class="sec-title">카테고리로 찾기</div><div class="cat-top">';
-  for (const top of tops) {
-    let n = 0;
-    for (const mid in CATTREE[top]) for (const leaf in CATTREE[top][mid]) n += CATTREE[top][mid][leaf];
-    // JSON.stringify 결과를 esc()로 한 번 더 감싸야 값에 따옴표가 있어도 onclick 속성이 안 깨진다
-    html += `<button onclick='nav({view:"cat",top:${esc(JSON.stringify(top))}})'>${esc(top)}<span>${n.toLocaleString()}개</span></button>`;
-  }
-  html += "</div>";
-  // 외부 바로가기: 네이버 브랜드 스토어·공식 어플.
-  // 안드로이드는 intent URL로 앱이 설치돼 있으면 바로 열고, 없으면 Play스토어로 폴백.
-  html += `<div class="sec-title">바로가기</div><div class="quicklinks">
-    <a href="https://brand.naver.com/mujikorea" target="_blank" rel="noopener">🛒 네이버 스마트 스토어</a>
-    <a href="https://mujikorea.co.kr/" target="_blank" rel="noopener">🌐 공식 온라인몰</a></div>`;
-  html += `<footer>매장 직원용 제품명·바코드 검색 도구입니다.<br>재고·가격은 인트라넷/POS 기준으로 확인하세요.<br><span class="ver">v${APP_VER}</span><span class="adminlink" onclick='nav({view:"admin"})'>·</span></footer>`;
-  $main.innerHTML = html;
-}
-
-function renderCat(top) {
-  const mids = CATTREE[top] || {};
-  let html = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">${esc(top)}</span></div>`;
-  for (const mid in mids) {
-    html += `<div class="leaf-group"><h3>${esc(mid)}</h3><div class="leaf-list">`;
-    for (const leaf in mids[mid]) {
-      const label = leaf.split(" > ").pop();
-      html += `<button onclick='nav({view:"leaf",leaf:${esc(JSON.stringify(leaf))}})'>${esc(label)} <b>${mids[mid][leaf]}</b></button>`;
-    }
-    html += "</div></div>";
-  }
-  $main.innerHTML = html;
-  window.scrollTo(0, 0);
-}
-
-let gridLimit = 60, lastLeaf = null;
-function renderLeaf(leaf) {
-  if (leaf !== lastLeaf) { gridLimit = 60; lastLeaf = leaf; }  // 다른 카테고리로 오면 초기화
-  const items = PRODUCTS.filter(p => p.cats.includes(leaf));
-  const label = leaf.split(" > ").join(" › ");
-  let html = `<div class="crumb"><button class="back" onclick="history.back()">← 뒤로</button><span class="path">${esc(label)}</span></div>`;
-  html += `<div class="rescount">${items.length}개</div>`;
-  html += grid(items, gridLimit, `renderLeafMore(${esc(JSON.stringify(leaf))})`);
-  $main.innerHTML = html;
-  window.scrollTo(0, 0);
-}
-window.renderLeafMore = leaf => {
-  const items = PRODUCTS.filter(p => p.cats.includes(leaf));
-  appendMore(items, gridLimit, gridLimit + 60);
-  gridLimit += 60;
-};
-
-let searchLimit = 60, lastQuery = null;
-function renderSearch(qRaw) {
-  if (qRaw !== lastQuery) { searchLimit = 60; lastQuery = qRaw; }
-  const items = doSearch(qRaw);
-  let html = `<div class="rescount">"${esc(qRaw.trim())}" 검색결과 ${items.length}개</div>`;
-  const q = qRaw.trim();
-  const codeLike = /^[A-Za-z0-9]{6,}$/.test(q) && /[A-Za-z]/.test(q) && /\d/.test(q);
-  if (!items.length) {
-    if (codeLike) {
-      html += '<div class="empty" id="codewait">수입 품번으로 온라인몰 검색 중…</div>';
-      searchCodeOnline(qRaw);
-    } else {
-      html += '<div class="empty">검색 결과가 없습니다.<br>단어를 줄여서 검색해 보세요. (예: "의류케이스" → "케이스")<br>온라인몰에 없는 매장 전용 상품일 수도 있습니다.</div>';
-    }
-  } else {
-    html += grid(items, searchLimit, "renderSearchMore()");
-  }
-  $main.innerHTML = html;
-}
-// 수입 품번(예: AC24HA6A)이 로컬 데이터에 없을 때 온라인몰 키워드 검색으로 보충
-// (search_keyword가 품번 검색을 지원함 — 데이터 갱신 전 제품도 찾아진다)
-async function searchCodeOnline(qRaw) {
-  let hits = [];
-  try {
-    const res = await fetch(`${MUJI_API}/products/search/list?display_size=20&exclude_soldout=0&page=1&search_keyword=${encodeURIComponent(qRaw.trim())}`,
-      { headers: { Accept: "application/json" } });
-    const rows = (((await res.json()).data || {}).rows || []);
-    hits = rows.map(r => PRODUCTS.find(p => p.id === r.product_id)).filter(Boolean);
-  } catch (e) { /* 오프라인 등 — 아래에서 기본 문구로 대체 */ }
-  // 기다리는 사이 검색어가 바뀌었으면 무시
-  if (qRaw !== lastQuery || !document.getElementById("codewait")) return;
-  if (hits.length) {
-    $main.innerHTML = `<div class="rescount">"${esc(qRaw.trim())}" 수입 품번 검색결과 ${hits.length}개</div>` + grid(hits, 60);
-  } else {
-    document.getElementById("codewait").innerHTML =
-      '검색 결과가 없습니다.<br>품번 철자를 확인해 보세요. 온라인몰에 없는 매장 전용 상품일 수도 있습니다.';
-  }
-}
-window.renderSearchMore = () => {
-  appendMore(doSearch(lastQuery), searchLimit, searchLimit + 60);
-  searchLimit += 60;
-};
-
-function cardHtml(p) {
-  const img = p._img
-    ? `<img src="${esc(imgUrl(p._img, 300))}" loading="lazy" decoding="async" onload="this.classList.add('ld')" alt="">`
-    : '<span class="noimg">이미지 없음</span>';
-  const badge = p.storeOnly ? '<span class="store-badge">매장전용</span>'
-    : (p.state === "SOLDOUT" ? '<span class="soldout-badge">품절</span>' : "");
-  return `<div class="pcard" onclick='nav({view:"product",id:${esc(JSON.stringify(p.id))}})'>
-    <div class="ph">${img}</div>
-    <div class="nm">${badge}${esc(p.name)}</div>
-    <div class="pr">${p.price ? p.price.toLocaleString() + "원" : ""}</div>
-  </div>`;
-}
-// "더 보기": 화면 전체를 다시 그리지 않고 그리드 뒤에 새 카드만 붙인다(이미 뜬 사진 유지, 스크롤 안 튐)
-function appendMore(items, from, to) {
-  const g = $main.querySelector(".grid"), btn = $main.querySelector("button.more");
-  if (!g) return;
-  g.insertAdjacentHTML("beforeend", items.slice(from, to).map(cardHtml).join(""));
-  if (btn) {
-    if (items.length > to) btn.textContent = `더 보기 (${items.length - to}개 남음)`;
-    else btn.remove();
-  }
-}
-function grid(items, limit, moreCall) {
-  let html = '<div class="grid">';
-  for (const p of items.slice(0, limit)) html += cardHtml(p);
-  html += "</div>";
-  if (moreCall && items.length > limit) html += `<button class="more" onclick='${moreCall}'>더 보기 (${items.length - limit}개 남음)</button>`;
-  return html;
-}
-
-/* ---------- 상세 ---------- */
-// 스펙 표 행 순서 — 제품 코드가 항상 맨 위(정확한 제품명 바로 아래)
-const SPEC_ORDER = ["제품 코드", "소재", "규격", "상세", "원산지", "제조년월", "설명"];
-// 바코드가 하나뿐인 제품(의류 등 다옵션 제외)이면 스펙 표에 합칠 재고 행 정보를 만든다
-function oneBcInfo(p) {
-  if (p.storeOnly || p.colors.length !== 1 || p.colors[0].sizes.length !== 1) return null;
-  const c = p.colors[0], s = c.sizes[0];
-  if (!s.barcode) return null;
-  const rawSz = (s.size === "XXX" || s.size === "FREE") ? "" : s.size;
-  return { bc: s.barcode, lb: (c.color && c.color !== "단품" ? c.color + " · " : "") + (rawSz || "단일") };
-}
-function specHtml(spec, stk) {
-  spec = spec || {};
-  const keys = Object.keys(spec).sort((a, b) => {
-    const ia = SPEC_ORDER.indexOf(a), ib = SPEC_ORDER.indexOf(b);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-  });
-  const rows = keys.map(k => {
-    let label = k, copyBtn = "";
-    if (k === "제품 코드") {
-      // 영문이 섞인 코드(의류 등)는 수입 품번 — 인트라넷/발주에서 쓰는 명칭
-      if (/[A-Za-z]/.test(spec[k])) label = "수입 품번";
-      copyBtn = `<button class="sbtn" onclick="copyText(${esc(JSON.stringify(spec[k]))}, '${label} 복사됨')">복사</button>`;
-    }
-    return `<div class="spec-row${copyBtn ? " coderow" : ""}"><span class="spec-k">${esc(label)}</span><span class="spec-v${k === "제품 코드" ? " mono" : ""}">${esc(spec[k])}</span>${copyBtn}</div>`;
-  });
-  if (stk) {
-    // 재고 행은 제품 코드 바로 아래(코드 행이 없으면 맨 위)
-    rows.splice(keys.indexOf("제품 코드") + 1, 0,
-      `<div class="spec-row stkrow" data-bc="${esc(stk.bc)}">
-        <span class="spec-k">재고</span>
-        <span class="spec-v sz"><span class="mystk wait">확인 중…</span></span>
-        <button class="sbtn stockbtn" data-bc="${esc(stk.bc)}" data-lb="${esc(stk.lb)}">재고</button>
-      </div>`);
-  }
-  return `<div class="specbox" id="specbox"${rows.length ? "" : ' style="display:none"'}>${rows.join("")}</div>`;
-}
-// products/view 응답으로 스펙 표 보강 — products.json에 없는 제품 코드·제조년월·설명을 채우고,
-// 사용상 주의는 길어서 표 아래에 접어 붙인다
-function applyInfo(p, info) {
-  if (!info) return;
-  const box = document.getElementById("specbox");
-  if (!box) return;
-  const stk = oneBcInfo(p);
-  const merged = Object.assign({}, p.spec);
-  if (stk && !merged["제품 코드"]) merged["제품 코드"] = stk.bc;
-  if (info.code) merged["제품 코드"] = info.code;
-  if (info.maker) merged["제조년월"] = info.maker;
-  if (info.content) merged["설명"] = info.content;
-  if (Object.keys(merged).length || stk) {
-    // 재고 칸은 loadMyStock이 병렬로 먼저 채웠을 수 있어 다시 그린 표에 상태를 옮겨 심는다
-    const oldSz = box.querySelector(".stkrow .sz");
-    box.outerHTML = specHtml(merged, stk);
-    const newSz = document.querySelector("#specbox .stkrow .sz");
-    if (oldSz && newSz) newSz.innerHTML = oldSz.innerHTML;
-  }
-  if (info.notice && !$detail.querySelector(".pnotice")) {
-    const d = document.createElement("details");
-    d.className = "pnotice";
-    d.innerHTML = `<summary>사용상 주의사항</summary><div class="nbody">${esc(info.notice)}</div>`;
-    document.getElementById("specbox").insertAdjacentElement("afterend", d);
-  }
-}
-// 색상 하나의 사이즈·바코드 행들
-function bcRowsHtml(p, c) {
-  if (!c.sizes.length) return '<div class="warn" style="margin:0">바코드 정보 없음</div>';
-  let h = "";
-  for (const s of c.sizes) {
-    // "XXX"·"FREE"는 API의 "사이즈 없음" 표시자 — 그대로 노출하면 깨진 글자처럼 보인다
-    const rawSz = (s.size === "XXX" || s.size === "FREE") ? "" : s.size;
-    const szLabel = rawSz ? esc(rawSz) : "단일";
-    const st = s.state === "SOLDOUT" ? '<div class="st">품절</div>' : "";
-    const stockLb = esc((c.color && c.color !== "단품" ? c.color + " · " : "") + (rawSz || "단일"));
-    h += `<div class="bcrow" data-bc="${esc(s.barcode)}">
-      <div class="sz">${szLabel}${st}${p.storeOnly ? "" : '<div class="mystk wait">…</div>'}</div>
-      <div class="bc">${esc(s.barcode)}</div>
-      ${p.storeOnly ? "" : `<button class="stockbtn" data-bc="${esc(s.barcode)}" data-lb="${stockLb}">재고</button>`}
-      <button onclick="copyText('${esc(s.barcode)}', '바코드 복사됨')">복사</button>
-    </div>`;
-  }
-  return h;
-}
-// 색상 칩 선택 — 해당 색상의 사이즈 행으로 교체하고 그 행들의 자점 재고를 불러온다
-window.selColor = i => {
-  const p = PRODUCTS.find(x => x.id === (history.state || {}).id);
-  const rows = document.getElementById("sizerows");
-  if (!p || !rows || !p.colors[i]) return;
-  document.querySelectorAll("#cchips > button").forEach((b, j) => b.classList.toggle("on", j === i));
-  const title = document.getElementById("seltitle");
-  if (title) title.textContent = p.colors[i].color === "단품" ? "기본" : p.colors[i].color;
-  rows.innerHTML = bcRowsHtml(p, p.colors[i]);
-  loadMyStock(p);
-  // 갤러리 연동 — 해당 색상 사진 그룹으로 스크롤(접혀 있으면 펼침)
-  const galg = [...document.querySelectorAll("#gal .galg")].find(el => el.dataset.color === p.colors[i].color);
-  if (galg) {
-    const det = galg.closest("details");
-    if (det) det.open = true;
-    galg.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-};
-function openDetail(id) {
-  const p = PRODUCTS.find(x => x.id === id);
-  if (!p) { renderHome(); return; }
-  // 저장된 대표 이미지(색상당 1장)를 먼저 그리고, 전체 사진은 API로 받아 교체한다
-  let imgs = [];
-  for (const c of p.colors) if (c.imgs && c.imgs[0]) imgs.push(c.imgs[0]);
-  if (!imgs.length && p._img) imgs = [p._img];
-  let html = `<div class="d-head"><button onclick="history.back()">← 뒤로</button><span>제품 상세</span></div><div class="d-body">`;
-  html += '<div id="gal">' + (imgs.length
-    ? '<div class="d-imgs">' + imgs.map(u => `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" onload="this.classList.add('ld')" alt="">`).join("") + "</div>"
-    : "") + "</div>";
-  html += `<div class="namebox">
-    <div class="lbl">정확한 제품명 (인트라넷 검색용)</div>
-    <div class="nm" id="pname">${esc(p.name)}</div>
-    <div class="pr">${p.storeOnly ? "🏬 매장 전용 상품 (온라인몰 미취급)" : (p.price ? "판매가 " + p.price.toLocaleString() + "원" : "") + (p.state === "SOLDOUT" ? " · 온라인몰 품절" : "")}</div>
-    <button class="copybtn" onclick="copyText(document.getElementById('pname').textContent, '제품명 복사됨')">제품명 복사</button>
-  </div>`;
-  // 바코드가 하나뿐이면 하단 바코드 블록 대신 스펙 표에 재고 행으로 합친다(이중 표시 제거)
-  const stk = oneBcInfo(p);
-  const spec = stk && !(p.spec && p.spec["제품 코드"])
-    ? Object.assign({ "제품 코드": stk.bc }, p.spec)  // 구 데이터엔 코드가 없어 바코드로 채움(단일 옵션은 코드=바코드)
-    : p.spec;
-  html += specHtml(spec, stk);
-  html += `<div class="warn">⚠ 인트라넷 제품명 검색은 띄어쓰기가 정확해야 합니다. 위 이름을 그대로 복사해서 쓰세요.</div>`;
-
-  if (!stk) {
-    if (p.colors.length > 1) {
-      // 색상이 여러 개(의류 등): 블록을 다 쌓지 않고 색상 칩으로 골라 보게 한다
-      html += `<div class="colorblock"><div class="cchips" id="cchips">` +
-        p.colors.map((c, i) => {
-          const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
-          const so = c.sizes.length && c.sizes.every(s => s.state === "SOLDOUT");
-          return `<button class="${i === 0 ? "on" : ""}" onclick="selColor(${i})">${chip}<span>${esc(c.color === "단품" ? "기본" : c.color)}</span>${so ? '<span class="cso">품절</span>' : ""}</button>`;
-        }).join("") +
-        `</div><div class="ctitle" id="seltitle">${esc(p.colors[0].color === "단품" ? "기본" : p.colors[0].color)}</div>` +
-        `<div id="sizerows">${bcRowsHtml(p, p.colors[0])}</div></div>`;
-    } else {
-      for (const c of p.colors) {
-        const chip = c.img ? `<img src="${esc(imgUrl(c.img, 100))}" loading="lazy" alt="">` : "";
-        const title = c.color && c.color !== "단품" ? esc(c.color) : "기본";
-        html += `<div class="colorblock"><div class="ctitle">${chip}${title}</div>${bcRowsHtml(p, c)}</div>`;
-      }
-    }
-  }
-  // 외부 바로가기: 온라인몰 제품 페이지(안드로이드는 공식앱 우선) + 네이버 스토어 내 검색.
-  // 매장 전용 상품은 온라인몰·네이버에 없으므로 생략. 네이버는 제품 ID 매핑이 없어 이름 검색으로 이동.
-  if (!p.storeOnly) {
-    const webUrl = `https://mujikorea.co.kr/products/view/${p.id}`;
-    const naverUrl = `https://brand.naver.com/mujikorea/search?q=${encodeURIComponent(naverQuery(p.name, p.colors))}`;
-    const tgt = ' target="_blank" rel="noopener"';
-    const mallBtn = `<a href="${webUrl}"${tgt}>🌐 온라인몰에서 보기</a>`;
-    html += `<div class="quicklinks dlinks">
-      <a href="${esc(naverUrl)}"${tgt}>🛒 네이버 스토어 검색</a>
-      ${mallBtn}</div>`;
-  }
-  html += `<div class="d-cats">분류: ${p.cats.map(esc).join("<br>")}</div></div>`;
-  $detail.innerHTML = html;
-  $detail.scrollTop = 0;
-  // 내용 레이아웃이 끝난 다음 프레임에 슬라이드 시작 — 그리기와 애니메이션이 겹치면 첫 프레임이 끊긴다
-  $detail._openedAt = performance.now() + 40;
-  const openId = p.id;
-  const openIt = () => {
-    const s = history.state || {};
-    if (s.view === "product" && s.id === openId) $detail.classList.add("open");
-  };
-  requestAnimationFrame(() => requestAnimationFrame(openIt));
-  setTimeout(openIt, 90);  // rAF가 멈추는 환경(백그라운드 전환 등) 대비 안전망
-  if (imgs.length) {
-    // 전체 사진이 오기 전(또는 오프라인이라 못 받을 때)에도 대표 사진은 크게 볼 수 있게
-    const box = document.getElementById("gal");
-    box.onclick = ev => {
-      const el = ev.target.closest("img");
-      if (el) openViewer(imgs, [...box.querySelectorAll("img")].indexOf(el));
-    };
-  }
-  // 갤러리와 자점 재고를 병렬로 — 둘 다 같은 products/view 요청을 쓰므로(프라미스 캐시) 중복 호출 없음
-  loadGallery(p);
-  loadMyStock(p);
-}
-// 상세 화면의 각 바코드 행에 자점(내 매장) 재고를 자동 표시.
-// 옵션마다 stores API 1회 — 100ms 간격 스태거 병렬(서버 배려), 세션 캐시(진행 중 프라미스) 재사용.
-function fetchStores(oid) {
-  if (!STOCK_CACHE[oid]) {
-    STOCK_CACHE[oid] = (async () => {
-      const res = await fetch(`${MUJI_API}/stores?product_option_id=${encodeURIComponent(oid)}&page=1`,
-        { headers: { Accept: "application/json" } });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      return (((await res.json()).data || {}).rows || []);
-    })().catch(e => { delete STOCK_CACHE[oid]; throw e; });
-  }
-  return STOCK_CACHE[oid];
-}
-let stockRun = 0;  // 색상 전환 등으로 새 호출이 시작되면 이전 작업의 결과 반영은 중단
-async function loadMyStock(p) {
-  if (p.storeOnly) return;
-  const run = ++stockRun;
-  const store = myStore();
-  let g = null;
-  try { g = await fetchGallery(p.id); } catch (e) {}
-  // .bcrow(색상·사이즈 블록)와 .stkrow(스펙 표의 재고 행) 둘 다 채운다.
-  // 주의: 행 요소를 미리 붙잡아두면 안 된다 — 병렬로 도는 applyInfo가 스펙 표를 다시 그리면
-  // 붙잡아둔 옛(분리된) 요소에 채우게 되고, 화면의 새 요소는 "확인 중…"으로 남아
-  // 마지막 정리에서 "확인 불가"가 됐다(2026-08-19 수정). 채우는 시점에 바코드로 다시 찾는다.
-  const bcs = [...$detail.querySelectorAll(".bcrow[data-bc], .stkrow[data-bc]")].map(el => el.dataset.bc);
-  if (g && g.optMap) {
-    await Promise.all(bcs.map(async (bc, i) => {
-      const m = g.optMap[bc];
-      if (!m) return;
-      if (i && !STOCK_CACHE[m.oid]) await new Promise(r => setTimeout(r, i * 100));  // 스태거
-      try {
-        const list = await fetchStores(m.oid);
-        // 다른 제품·다른 색상으로 넘어갔으면 반영하지 않는다(닫으면 history 상태가 먼저 바뀐다)
-        if (run !== stockRun || (history.state || {}).id !== p.id) return;
-        // 미리 그려둔 고정 높이 자리(.mystk.wait)의 내용만 바꾼다 — 행 높이가 안 변해 화면이 안 밀린다
-        const mine = list.find(r => r.id === store.id);
-        const rowEl = $detail.querySelector(`.bcrow[data-bc="${bc}"], .stkrow[data-bc="${bc}"]`);
-        const slot = rowEl && rowEl.querySelector(".sz .mystk");
-        if (slot && slot.classList.contains("wait")) {
-          const n = mine ? (mine.usable_stock || 0) : null;
-          slot.textContent = `${store.name} ${n === null ? "?" : (n ? n + "개" : "없음")}`;
-          slot.classList.remove("wait");
-          slot.classList.toggle("zero", !n);
-        }
-      } catch (e) {}  // 오프라인 등 — 아래에서 안내 처리(버튼으로는 재시도 가능)
-    }));
-  }
-  // 못 채운 자리는 안내로 바꿔둔다(오프라인·옵션 매핑 실패 등). wait 클래스는 남겨 재시도 시 다시 채워진다.
-  if (run === stockRun && (history.state || {}).id === p.id)
-    $detail.querySelectorAll(".mystk.wait").forEach(el => {
-      el.textContent = el.closest(".stkrow") ? "확인 불가 — [재고]를 눌러 재시도" : "?";
-    });
-}
-function closeDetail() { $detail.classList.remove("open"); }
-
-/* ---------- 상세 사진 전체(온라인몰 API에서 즉시 조회) ----------
-   products.json에는 용량 때문에 색상당 대표 1장만 저장한다(전부 넣으면 25MB↑).
-   상세를 열 때 products/view 를 호출해 색상별 사진 전체 + 상세페이지 이미지를 받아 교체.
-   실패(오프라인 등)하면 이미 그려둔 대표 사진이 그대로 남는다. */
-const GAL_CACHE = {};
-const MUJI_API = "https://api.mujikorea.co.kr/api";
-function uniqUrls(a) {
-  const seen = new Set();
-  return (a || []).filter(u => typeof u === "string" && u && !/no.?image/i.test(u) && !seen.has(u) && (seen.add(u), true));
-}
-// 같은 제품을 갤러리·재고가 동시에 요청해도 fetch는 1번만 가게 진행 중인 프라미스를 캐시한다
-function fetchGallery(id) {
-  if (!GAL_CACHE[id]) {
-    GAL_CACHE[id] = fetchGalleryRaw(id).catch(e => { delete GAL_CACHE[id]; throw e; });
-  }
-  return GAL_CACHE[id];
-}
-async function fetchGalleryRaw(id) {
-  const res = await fetch(`${MUJI_API}/products/view/${encodeURIComponent(id)}`, { headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  const prod = (((await res.json()).data || {}).row || {}).product || {};
-  const groups = [];
-  const opts = prod.options;
-  if (opts && typeof opts === "object") {
-    for (const cname in opts) {
-      const c = opts[cname];
-      // 단일옵션(option_type=ONE) 응답에 섞이는 option_name(문자열)·data(null) 키는 건너뛴다
-      if (!c || typeof c !== "object") continue;
-      const list = uniqUrls(c.images);
-      if (list.length) groups.push({ color: (cname || "").trim(), imgs: list });
-    }
-  }
-  // 이미지 서버 No Image 함정: 옵션 사진이 자동 생성된 바코드 경로({바코드}_1260.jpg) 1장뿐인 제품은
-  // 실제 업로드가 없어 플레이스홀더 그림이 뜬다(2026-08-19 확인, 예: 튼튼한 수납 박스 화이트그레이).
-  // 이 경우 공식 제품 페이지 캐러셀(thumbnail_list)로 대체 — 진짜 사진 1장뿐인 제품이어도 같은 제품 사진이라 손해 없음.
-  const thumbs = uniqUrls(prod.thumbnail_list);
-  if (groups.length === 1 && groups[0].imgs.length === 1 &&
-      /\/\d{10,14}_1260\.jpg$/i.test(groups[0].imgs[0]) && thumbs.length) {
-    groups[0].imgs = thumbs;
-  }
-  if (!groups.length && thumbs.length) groups.push({ color: "", imgs: thumbs });
-  // 바코드 → 옵션ID·재고 매핑(매장 재고 조회용). 색상형·단품형 구조가 달라 재귀로 수집.
-  const optMap = {};
-  (function scan(node) {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) { node.forEach(scan); return; }
-    if (node.option_barcode && node.product_option_id) {
-      optMap[node.option_barcode] = { oid: node.product_option_id, stock: node.stock, dc: node.muji_dc_stock };
-    }
-    for (const k in node) scan(node[k]);
-  })(opts);
-  GAL_CACHE[id] = {
-    groups, detail: uniqUrls(prod.detail_images), optMap,
-    // 스펙 표 보강용 추가 정보(제품 코드·제조년월·설명·사용상 주의)
-    info: {
-      code: (prod.code || "").trim(),
-      maker: (prod.maker_at || "").trim(),
-      content: (prod.content || "").trim(),
-      notice: ((prod.notice1 || "") + (prod.notice2 ? "\n" + prod.notice2 : "")).trim(),
-    },
-  };
-  return GAL_CACHE[id];
-}
-async function loadGallery(p) {
-  let g;
-  try { g = await fetchGallery(p.id); } catch (e) { return; }
-  // 슬라이드 전환이 끝난 뒤에 갤러리를 갈아끼운다(전환 중 레이아웃 변경이 끊김의 원인)
-  const wait = ($detail._openedAt || 0) + 280 - performance.now();
-  if (wait > 0) await new Promise(r => setTimeout(r, wait));
-  const box = document.getElementById("gal");
-  if (!box) return;
-  // 그리는 사이 다른 제품으로 넘어갔으면 무시.
-  // (.open 클래스 검사는 안 씀 — 백그라운드 탭은 rAF·타이머가 늦어 fetch가 먼저 끝나면 조기 반환됐다)
-  if ((history.state || {}).id !== p.id) return;
-  applyInfo(p, g.info);
-  const multi = g.groups.length > 1;
-  const total = g.groups.reduce((n, x) => n + x.imgs.length, 0);
-  if (total) {
-    const grpHtml = (grp, gi) =>
-      `<div class="galg" data-color="${esc(grp.color)}">${multi && grp.color ? `<div class="gall">${esc(grp.color)} · ${grp.imgs.length}장</div>` : ""}
-        <div class="d-imgs">${grp.imgs.map((u, i) =>
-          `<img src="${esc(imgUrl(u, 400))}" loading="lazy" decoding="async" onload="this.classList.add('ld')" alt="" data-g="${gi}" data-i="${i}">`).join("")}</div>
-      </div>`;
-    // 색상이 많으면 제품명이 한참 아래로 밀리므로 3번째 색상부터는 접어둔다
-    const head = g.groups.slice(0, 2).map(grpHtml).join("");
-    const rest = g.groups.slice(2);
-    box.innerHTML = head + (rest.length
-      ? `<details class="galmore"><summary>다른 색상 사진 (${rest.length}개 색상)</summary>` +
-        rest.map((grp, i) => grpHtml(grp, i + 2)).join("") + "</details>"
-      : "") + `<div class="gal-load">사진 ${total}장 · 탭하면 크게 보입니다</div>`;
-    box.querySelectorAll("details").forEach(eagerOnOpen);
-    box.onclick = ev => {
-      const el = ev.target.closest("img[data-g]");
-      if (!el) return;
-      openViewer(g.groups[+el.dataset.g].imgs, +el.dataset.i);
-    };
-  }
-  // 상세 페이지 이미지(연출컷·설명·규격표)는 접어서 아래에 붙인다
-  const body = $detail.querySelector(".d-body");
-  if (g.detail.length && body && !body.querySelector(".dimgs")) {
-    const d = document.createElement("details");
-    d.className = "dimgs";
-    // eager+낮은 우선순위: 접힌 상태에서도 미리 내려받아 펼치는 순간 바로 보이게 한다
-    // (lazy는 접힌 details 안에서 로드가 시작되지 않아 펼친 뒤 한참 걸렸음)
-    d.innerHTML = `<summary>상세 페이지 이미지 (${g.detail.length})</summary><div class="dbody">` +
-      g.detail.map(u => `<img src="${esc(imgUrl(u, 800))}" loading="eager" fetchpriority="low" decoding="async" alt="">`).join("") + "</div>";
-    const cats = body.querySelector(".d-cats");
-    body.insertBefore(d, cats || null);
-  }
-}
-// 접힌 <details> 안의 lazy 이미지는 펼쳐도 바로 로드되지 않는 경우가 있어, 펼칠 때 eager로 바꾼다
-function eagerOnOpen(det) {
-  det.addEventListener("toggle", () => {
-    if (det.open) det.querySelectorAll('img[loading="lazy"]').forEach(im => { im.loading = "eager"; });
-  });
-}
-/* 사진 크게 보기 — 좌우로 넘기며 보고, 뒤로가기(또는 ✕)로 닫는다 */
-let VIEWER_OPEN = false;
-function openViewer(list, idx) {
-  const v = document.getElementById("viewer");
-  v.querySelector(".vstrip").innerHTML = list.map(u =>
-    `<div><img src="${esc(imgUrl(u, 1000))}" alt=""></div>`).join("");
-  v.querySelector(".vcnt").textContent = `${idx + 1} / ${list.length}`;
-  v.classList.add("open");
-  VIEWER_OPEN = true;
-  const strip = v.querySelector(".vstrip");
-  strip.scrollLeft = strip.clientWidth * idx;
-  strip.onscroll = () => {
-    const i = Math.round(strip.scrollLeft / strip.clientWidth);
-    v.querySelector(".vcnt").textContent = `${Math.min(i + 1, list.length)} / ${list.length}`;
-  };
-  history.pushState(Object.assign({}, history.state || {}, { viewer: true }), "", "#");
-}
-function closeViewer() {
-  const v = document.getElementById("viewer");
-  v.classList.remove("open");
-  v.querySelector(".vstrip").innerHTML = "";
-  VIEWER_OPEN = false;
-}
-
-/* ---------- 매장 재고 (stores?product_option_id API) ----------
-   상세의 바코드 행 "재고" 버튼 → 바텀시트에 전 매장(50곳) 재고 표시.
-   내 매장(★, localStorage)은 맨 위에 강조. 옵션ID는 갤러리 fetch 응답에서 매핑. */
-let STOCK_OPEN = false;
-const STOCK_CACHE = {};  // optionId → 매장 rows (세션 캐시)
-// 자점 기본값: 스타필드 수원점(id 55). ☆로 다른 매장을 저장하면 그게 우선.
-const DEFAULT_STORE = { id: 55, name: "스타필드 수원점" };
-function myStore() {
-  try { return JSON.parse(localStorage.getItem("myStore") || "null") || DEFAULT_STORE; } catch (e) { return DEFAULT_STORE; }
-}
-function setMyStore(id, name) {
-  localStorage.setItem("myStore", JSON.stringify({ id, name }));
-  toast("내 매장: " + name);
-  if (window.__stockArgs) renderStockSheet(...window.__stockArgs);  // 재렌더
-}
-// 상세 화면의 "재고" 버튼(위임 — 상세는 innerHTML로 매번 갈리므로)
-$detail.addEventListener("click", ev => {
-  const b = ev.target.closest(".stockbtn");
-  if (b) openStock(b.dataset.bc, b.dataset.lb);
-});
-async function openStock(bc, label) {
-  const pid = (history.state || {}).id;
-  STOCK_OPEN = true;
-  const sheet = document.getElementById("stocksheet");
-  sheet.querySelector(".ss-panel").innerHTML =
-    `<div class="ss-head"><div class="ss-title">매장 재고 · ${esc(label || "")}</div>
-     <div class="ss-sub">${esc(bc)}</div></div><div class="ss-load">재고 확인 중…</div>`;
-  sheet.classList.add("open");
-  history.pushState(Object.assign({}, history.state || {}, { stock: true }), "", "#");
-  try {
-    const g = await fetchGallery(pid);
-    const m = g.optMap && g.optMap[bc];
-    if (!m) throw new Error("옵션 정보 없음");
-    const rows = await fetchStores(m.oid);
-    if (!STOCK_OPEN) return;  // 기다리는 사이 닫은 경우
-    renderStockSheet(bc, label, m, rows);
-  } catch (e) {
-    if (!STOCK_OPEN) return;
-    sheet.querySelector(".ss-panel").innerHTML =
-      `<div class="ss-head"><div class="ss-title">매장 재고 · ${esc(label || "")}</div></div>
-       <div class="ss-load">재고를 불러오지 못했습니다.<br>인터넷 연결을 확인해 주세요.</div>`;
-  }
-}
-function renderStockSheet(bc, label, m, rows, q, showZero) {
-  const sheet = document.getElementById("stocksheet");
-  const my = myStore();
-  const myRow = my && rows.find(r => r.id === my.id);
-  const row = (r, star) => `<div class="ss-row"><span class="n">${esc(r.store_name)}</span>
-    <span class="q ${r.usable_stock ? "" : "zero"}">${r.usable_stock ? r.usable_stock + "개" : "없음"}</span>
-    ${star ? `<button class="star" data-sid="${r.id}" data-sname="${esc(r.store_name)}" title="내 매장으로 설정">☆</button>` : ""}</div>`;
-  let html = `<div class="ss-head"><div class="ss-title">매장 재고 · ${esc(label || "")}</div>
-    <div class="ss-sub">${esc(bc)}</div></div>`;
-  html += myRow
-    ? `<div class="ss-my"><span>★ ${esc(myRow.store_name)}</span><b class="q">${myRow.usable_stock ? myRow.usable_stock + "개" : "재고 없음"}</b></div>`
-    : `<div class="ss-hint">☆를 누르면 우리 매장으로 저장되어 다음부터 맨 위에 표시됩니다.</div>`;
-  html += `<div class="ss-online">온라인몰 ${m.stock ?? "?"}개 · 물류센터 ${m.dc ?? "?"}개 · 매장 재고는 실시간 변동될 수 있음</div>`;
-  html += `<div class="ss-search"><input id="ssq" type="search" placeholder="매장 검색" autocomplete="off" value="${esc(q || "")}"></div>`;
-  html += `<div class="ss-list"></div>`;
-  const panel = sheet.querySelector(".ss-panel");
-  panel.innerHTML = html;
-  const inp = panel.querySelector("#ssq");
-  const listEl = panel.querySelector(".ss-list");
-  const state = { q: q || "", showZero: !!showZero };
-  // 검색은 목록(.ss-list)만 다시 그린다. 시트 전체를 다시 그리면 입력창이 매 글자마다
-  // 새 요소로 교체돼 포커스가 날아가고(한 글자만 입력됨) 한글 조합(IME)도 끊긴다(2026-08-20 수정).
-  const drawList = () => {
-    window.__stockArgs = [bc, label, m, rows, state.q, state.showZero];  // ☆ 저장 후 재렌더 시 상태 유지
-    const nq = norm(state.q);
-    const sorted = [...rows].sort((a, b) => (b.usable_stock || 0) - (a.usable_stock || 0) || String(a.store_name).localeCompare(b.store_name, "ko"));
-    const list = nq ? sorted.filter(r => norm(r.store_name).includes(nq)) : sorted;
-    const has = list.filter(r => (r.usable_stock || 0) > 0);
-    const zero = list.filter(r => !(r.usable_stock || 0));
-    let h = has.map(r => row(r, true)).join("") || (nq ? "" : '<div class="ss-load">재고 보유 매장이 없습니다</div>');
-    if (zero.length) {
-      h += (state.showZero || nq)
-        ? zero.map(r => row(r, true)).join("")
-        : `<button class="ss-more" id="ssZero">재고 없는 매장 ${zero.length}곳 보기</button>`;
-    }
-    if (nq && !list.length) h = '<div class="ss-load">일치하는 매장이 없습니다</div>';
-    listEl.innerHTML = h;
-    const zbtn = listEl.querySelector("#ssZero");
-    if (zbtn) zbtn.addEventListener("click", () => { state.showZero = true; drawList(); });
-    listEl.querySelectorAll(".star").forEach(b =>
-      b.addEventListener("click", () => setMyStore(Number(b.dataset.sid), b.dataset.sname)));
-  };
-  inp.addEventListener("input", () => { state.q = inp.value; drawList(); });
-  drawList();
-  // 목록 영역 높이를 첫 렌더(전체 매장) 크기로 고정 — 검색으로 결과 수가 확 줄어도
-  // 시트가 위아래로 출렁이지 않는다(입력 때마다 어지럽다는 피드백, 2026-08-20 수정).
-  // clientHeight 읽기가 레이아웃을 강제하므로 rAF 없이 바로 재도 된다(rAF는 백그라운드 탭에서 멈춤).
-  if (listEl.clientHeight) {
-    listEl.style.height = listEl.clientHeight + "px";
-    listEl.style.flex = "none";
-  }
-}
-function closeStock() {
-  document.getElementById("stocksheet").classList.remove("open");
-  STOCK_OPEN = false;
-  window.__stockArgs = null;
-}
-// 시트 바깥(어두운 배경) 탭 → 닫기
-document.getElementById("stocksheet").addEventListener("click", ev => {
-  if (ev.target.id === "stocksheet") history.back();
-});
-// 교육자료의 [이름](p:바코드) 링크 → 그 바코드를 가진 제품 상세를 연다
-// 이동 전에 보던 문서의 접기·스크롤 상태를 저장해, 뒤로가기로 돌아오면 그대로 복원한다
-const DOC_VIEW = {};
-function saveDocView() {
-  const id = window.__curEduDocId;
-  if (!id || !document.querySelector(".doc")) return;
-  DOC_VIEW[id] = {
-    folds: [...document.querySelectorAll(".doc-fold")].map(f => f.open),
-    y: window.scrollY,
-  };
-}
-function openByBarcode(bc) {
-  const p = PRODUCTS.find(x => x.colors.some(c => c.sizes.some(s => s.barcode === bc)));
-  if (p) { saveDocView(); nav({ view: "product", id: p.id }); }
-  else toast("앱 데이터에 없는 제품입니다 (" + bc + ")");
-}
+const DOC_VIEW = {};  // (옛 제품 상세 왕복용) 문서 접기·스크롤 상태
 
 /* ---------- 복사 & 토스트 ---------- */
 function copyText(text, msg) {
@@ -2707,404 +1914,6 @@ function imgUrl(url, w) {
   return url + (url.indexOf("?") >= 0 ? "&" : "?") + "w=" + w;
 }
 
-/* ---------- 바코드 카메라 스캔 ---------- */
-// @zxing/library(vendor/zxing.min.js) 사용 — iOS 사파리 포함 모든 브라우저에서 동작.
-// 라이브러리(약 360KB)는 스캔 버튼을 처음 누를 때만 로드해 초기 로딩엔 부담이 없다.
-let scanControls = null, scanReader = null, zxingLoading = null, scanHandled = false;
-let scanWatch = null, scanLastTick = 0;  // 인식 루프 생존 감시(워치독)
-function loadZxing() {
-  if (window.ZXing) return Promise.resolve();
-  if (zxingLoading) return zxingLoading;
-  zxingLoading = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "./vendor/zxing.min.js";
-    s.onload = resolve;
-    s.onerror = () => { zxingLoading = null; reject(new Error("스캐너 로드 실패")); };
-    document.head.appendChild(s);
-  });
-  return zxingLoading;
-}
-// 신형 디코더 zxing-wasm(zxing-cpp WASM, vendor/zxing-wasm-reader.js + zxing_reader.wasm 940KB).
-// 구형 대비: 저대비 크라프트지·세로/거꾸로 바코드 인식, 실패 프레임 10~50ms(구형 정밀 731ms).
-// 로드·초기화가 끝나면 __wasmScan=true — 스캔 루프가 틱마다 확인해 신형을 우선 사용.
-// 실패(오프라인 첫 로드 등)해도 기존 zxing-js 체인으로 스캔은 된다.
-let wasmLoading = null;
-function loadZxingWasm() {
-  if (wasmLoading) return wasmLoading;
-  wasmLoading = new Promise(resolve => {
-    const s = document.createElement("script");
-    s.src = "./vendor/zxing-wasm-reader.js";
-    s.onload = async () => {
-      try {
-        window.ZXingWASM.prepareZXingModule({ overrides: { locateFile: p => p.endsWith(".wasm") ? "./vendor/zxing_reader.wasm" : p } });
-        const c = document.createElement("canvas"); c.width = 32; c.height = 32;  // 워밍업(wasm 실로드)
-        await window.ZXingWASM.readBarcodes(c.getContext("2d").getImageData(0, 0, 32, 32), { formats: ["EAN-13"] });
-        window.__wasmScan = true;
-      } catch (e) {}
-      resolve();
-    };
-    s.onerror = () => { wasmLoading = null; resolve(); };
-    document.head.appendChild(s);
-  });
-  return wasmLoading;
-}
-const WASM_FORMATS = ["EAN-13", "EAN-8", "UPC-A", "Code128"];
-async function wasmRead(imageData, hard) {
-  try {
-    const res = await window.ZXingWASM.readBarcodes(imageData,
-      { formats: WASM_FORMATS, tryHarder: !!hard, maxNumberOfSymbols: 1 });
-    const t = res && res[0] && res[0].text;
-    return t ? { getText: () => t } : null;
-  } catch (e) { return null; }
-}
-async function openScanner() {
-  // 카메라는 보안 컨텍스트(https 또는 localhost)에서만 열림
-  if (!navigator.mediaDevices || !window.isSecureContext) {
-    toast("카메라는 https 주소에서만 됩니다"); return;
-  }
-  scanHandled = false;
-  const sc = document.getElementById("scanner");
-  document.getElementById("scanmsg").textContent = "카메라 켜는 중…";
-  sc.classList.add("open");
-  const video = document.getElementById("scanvideo");
-  // 첫 프레임이 나오면 검은 화면에서 영상으로 페이드인
-  video.addEventListener("loadeddata", () => video.classList.add("on"), { once: true });
-  // 해상도는 처음부터 2560×1440으로 요청한다. (720p로 시작해 나중에 올리는 방식을
-  // 실험했으나: 시작 속도는 그대로 1~2초였고, 안드로이드 크롬은 켜진 트랙의 해상도를
-  // 처음 연 값 이상으로 못 올려 화질만 떨어졌다 → 되돌림. 남는 1~2초는 카메라 하드웨어 기동 시간.)
-  const constraints = { video: { facingMode: "environment", width: { ideal: 2560 }, height: { ideal: 1440 } } };
-  // 카메라와 zxing 라이브러리를 "동시에" 준비 — 카메라가 먼저 되면 화면부터 띄운다
-  // (예전엔 라이브러리 로드가 끝나야 카메라를 요청해서 화면이 늦게 떴다)
-  const zxingP = loadZxing();
-  loadZxingWasm();  // 신형 디코더도 병렬 준비 — 준비되는 즉시 루프가 자동으로 신형 사용(__wasmScan)
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-  } catch (e) {
-    closeScanner();
-    toast(e && e.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "카메라를 열 수 없습니다");
-    return;
-  }
-  if (!sc.classList.contains("open")) { stream.getTracks().forEach(t => t.stop()); return; }  // 기다리다 닫은 경우
-  video.srcObject = stream;
-  try { await video.play(); } catch (e) {}
-  tuneCameraFocus(video);  // 근접 초점 개선(연속 초점) — 인식 준비와 무관하게 바로
-  initScanZoom(video);     // 줌 지원 기기면 1×/1.5×/2× 버튼 표시
-  try {
-    await zxingP;
-  } catch (e) {
-    closeScanner(); toast("스캐너를 불러오지 못했습니다"); return;
-  }
-  if (!sc.classList.contains("open")) return;
-  // 무인양품 바코드는 EAN-13(JAN). 포맷을 좁혀 인식 속도를 높인다.
-  // TRY_HARDER는 평소엔 끈다(2026-08-19 실측: 실패 프레임 처리 731ms→60ms, 12배 —
-  // 조준 중엔 대부분 실패 프레임이라 이 비용이 체감 인식률을 결정한다. 기울기 10°·저대비까지는
-  // TRY_HARDER 없이도 인식됨). 흐림(초점 안 맞음) 구제용 정밀 리더는 8틱마다 1번만 쓴다.
-  const hints = new Map();
-  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-    ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
-    ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.CODE_128,
-  ]);
-  const hintsHard = new Map(hints);
-  hintsHard.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  // 2번째 인자 = 인식 시도 간격(ms). 기본 500ms는 반응이 굼떠서 100ms로.
-  scanReader = new ZXing.BrowserMultiFormatReader(hints, 100);
-  const hardReader = new ZXing.BrowserMultiFormatReader(hintsHard, 100);
-  // 콜백은 성공/실패 매 시도마다 온다 → 마지막 호출 시각으로 루프 생존을 감시
-  const onResult = (result, err) => {
-    scanLastTick = Date.now();
-    if (result) handleScanCode((result.getText() || "").trim());
-  };
-  try {
-    // 비디오 해상도가 잡힌 뒤에 인식을 시작해야 한다 — zxing은 시작 시점의
-    // videoWidth로 캡처 캔버스를 만들어 "재사용"하므로, 이르면 작은 크기로 굳어 인식률이 떨어진다.
-    if (!video.videoWidth) {
-      await new Promise(res => { video.addEventListener("loadedmetadata", res, { once: true }); setTimeout(res, 1500); });
-    }
-    if (ZXing.HTMLCanvasElementLuminanceSource && ZXing.BinaryBitmap && ZXing.HybridBinarizer) {
-      // 자체 크롭 해독 루프(2026-08-19 인식률 개선): 전체 프레임 대신 화면 중앙(스캔 프레임 주변)만
-      // 잘라 해독한다 — 화소가 1/3로 줄어 시도당 CPU·발열이 크게 줄고(초당 시도↑), 바코드 주변만
-      // 이진화하므로 배경(선반·손)에 히스토그램이 끌려가던 문제도 사라진다. 예외를 전부 잡아
-      // 루프가 조용히 죽는 일이 없어 워치독도 필요 없다.
-      startScanLoop(video, scanReader, hardReader, onResult, await initNativeDetector());
-    } else if (typeof scanReader.decodeContinuously === "function") {
-      // 이미 재생 중인 비디오에 인식 루프만 붙인다(srcObject 재부착 없음 → 크기 레이스 원천 차단)
-      scanReader.decodeContinuously(video, onResult);
-      // 워치독: zxing은 예상 밖 예외가 한 번 나면 루프를 조용히 멈춘다 → 3초간 신호 없으면 재시작.
-      // 주의: 같은 리더에 decodeContinuously를 다시 부르면 stop 플래그가 지워져, 죽지 않고
-      // 느려졌을 뿐인 옛 루프가 계속 살아남아 "이중 루프"가 된다(CPU 2배 → 인식 더 느려짐 악순환).
-      // → 옛 리더는 stop만 걸어 버리고, 매번 새 리더 인스턴스로 재부착한다.
-      scanLastTick = Date.now();
-      clearInterval(scanWatch);
-      scanWatch = setInterval(() => {
-        if (!scanReader || !sc.classList.contains("open")) return;
-        if (Date.now() - scanLastTick > 3000) {
-          try { if (scanReader.stopContinuousDecode) scanReader.stopContinuousDecode(); } catch (e) {}
-          try {
-            scanReader = new ZXing.BrowserMultiFormatReader(hints, 100);
-            scanReader.decodeContinuously(video, onResult);
-          } catch (e) {}
-          scanLastTick = Date.now();
-        }
-      }, 1500);
-    } else if (typeof scanReader.decodeFromStream === "function") {
-      scanControls = await scanReader.decodeFromStream(stream, video, onResult);
-    } else {
-      // 구버전 폴백: 스트림을 끄고 기존 방식으로 재요청
-      stream.getTracks().forEach(t => t.stop());
-      scanControls = await scanReader.decodeFromConstraints(constraints, video, onResult);
-      tuneCameraFocus(video);
-    }
-  } catch (e) {
-    closeScanner();
-    toast("스캐너 시작에 실패했습니다. 다시 열어 보세요");  // 카메라는 이미 켜진 뒤라 인식기 준비 쪽 문제
-  }
-}
-// 자체 크롭 해독 루프 — 화면 중앙(가로 86% × 세로 44%)만 잘라 zxing으로 해독.
-// 평소엔 빠른 리더(TRY_HARDER 없음, 실패 60ms)로 자주 시도하고,
-// 8틱마다 1번 정밀 리더(TRY_HARDER + 2단 이진화)로 흐린 프레임을 구제한다.
-// 안드로이드 크롬 내장 BarcodeDetector(구글 ML 기반) — zxing보다 저대비·흐림·기울기에 훨씬 강함.
-// iOS는 미지원/깨짐(기존 확인)이라 안드로이드에서만 쓰고, 없거나 오류면 zxing 체인으로 폴백.
-async function initNativeDetector() {
-  if (!/Android/.test(navigator.userAgent) || !("BarcodeDetector" in window)) return null;
-  try {
-    const fmts = await window.BarcodeDetector.getSupportedFormats();
-    const want = ["ean_13", "ean_8", "upc_a", "code_128"].filter(f => fmts.includes(f));
-    if (!want.includes("ean_13")) return null;
-    return new window.BarcodeDetector({ formats: want });
-  } catch (e) { return null; }
-}
-let scanLoopStop = null;
-function startScanLoop(video, fastReader, hardReader, onResult, nativeDet) {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  // 채널 분리 재시도용 축소 캔버스(아래 주석 참고)
-  const small = document.createElement("canvas");
-  const sctx = small.getContext("2d", { willReadFrequently: true });
-  let stopped = false, n = 0;
-  if (scanLoopStop) scanLoopStop();  // 혹시 남아있던 이전 루프 정지(항상 1개만)
-  scanLoopStop = () => { stopped = true; };
-  const decode = (reader, cv, useGlobal) => {
-    const lum = new ZXing.HTMLCanvasElementLuminanceSource(cv);
-    try { return reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum))); } catch (e1) {}
-    if (useGlobal && ZXing.GlobalHistogramBinarizer) {
-      try { return reader.decodeBitmap(new ZXing.BinaryBitmap(new ZXing.GlobalHistogramBinarizer(lum))); } catch (e2) {}
-    }
-    return null;
-  };
-  const tick = async () => {
-    if (stopped) return;
-    scanLastTick = Date.now();
-    if (video.videoWidth && video.readyState >= 2 && !document.hidden) {
-      try {
-        const vw = video.videoWidth, vh = video.videoHeight;
-        const cw = Math.round(vw * 0.86), ch = Math.round(vh * 0.44);
-        if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
-        ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, cw, ch);
-        const hard = (++n % 8 === 0);
-        let result = null;
-        // 1) 네이티브 인식기(안드로이드) — 컬러 프레임 그대로 인식, 저대비 크라프트지에 가장 강함
-        if (nativeDet) {
-          try {
-            const codes = await nativeDet.detect(canvas);
-            if (!stopped && codes && codes.length && codes[0].rawValue) {
-              const v = codes[0].rawValue;
-              result = { getText: () => v };
-            }
-          } catch (e) { nativeDet = null; }  // 미지원·오류면 이후 zxing만 사용
-        }
-        if (!result && window.__wasmScan) {
-          // 2a) 신형 zxing-wasm(zxing-cpp): 컬러 그대로 + 회전·반전 자동 — 크라프트지·세로 바코드까지
-          // 커버(2026-08-20 실사진 벤치: 실패 프레임 10~30ms, 정밀도·속도 모두 구형 압도).
-          result = await wasmRead(ctx.getImageData(0, 0, cw, ch), hard);
-          if (!result) {
-            // 저대비 구제: 800px 축소판을 녹색·적색 채널 회색조로 바꿔 재시도(시도당 2~10ms라 둘 다)
-            const sw = Math.min(800, cw), sh = Math.round(ch * sw / cw);
-            if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
-            sctx.drawImage(canvas, 0, 0, sw, sh);
-            const sid = sctx.getImageData(0, 0, sw, sh);
-            for (const off of [1, 0]) {  // 녹색(적갈색 잉크가 어둡게) → 적색(검정 잉크 대비 최대)
-              const cid = new ImageData(new Uint8ClampedArray(sid.data), sw, sh);
-              const d = cid.data;
-              for (let i = 0; i < d.length; i += 4) { const v = d[i + off]; d[i] = d[i + 1] = d[i + 2] = v; }
-              result = await wasmRead(cid, hard);
-              if (result) break;
-            }
-          }
-        } else if (!result) {
-          // 2b) 구형 zxing-js 체인 — 신형(wasm) 로드 전이거나 로드 실패한 환경의 폴백
-          result = decode(hard ? hardReader : fastReader, canvas, hard);
-          if (!result) {
-            // 크라프트지 저대비 구제: 녹/적 채널 교대 + 800/480px 축소 교대(비용 ~15-30ms)
-            const sw = Math.min(n % 4 < 2 ? 800 : 480, cw), sh = Math.round(ch * sw / cw);
-            if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
-            sctx.drawImage(canvas, 0, 0, sw, sh);
-            const id = sctx.getImageData(0, 0, sw, sh);
-            const d = id.data, off = (n % 2) ? 1 : 0;  // 홀수틱=녹색, 짝수틱=적색
-            for (let i = 0; i < d.length; i += 4) { const v = d[i + off]; d[i] = d[i + 1] = d[i + 2] = v; }
-            sctx.putImageData(id, 0, 0);
-            result = decode(hard ? hardReader : fastReader, small, hard);
-          }
-        }
-        if (result && !stopped) onResult(result, null);
-      } catch (e) {}  // drawImage 실패 등 — 다음 틱에서 재시도
-    }
-    setTimeout(tick, 90);
-  };
-  tick();
-}
-// 카메라 줌 버튼(지원 기기 한정): 작은 상자의 바코드는 가까이 대면 초점이 안 잡히는데(최소 초점거리),
-// 줌을 쓰면 초점 잡히는 거리를 유지한 채 바코드를 크게 담을 수 있다(2026-08-20, 크라프트 소형박스 대응)
-function initScanZoom(video) {
-  const btn = document.getElementById("scanzoom");
-  if (!btn) return;
-  btn.style.display = "none";
-  try {
-    const track = video.srcObject && video.srcObject.getVideoTracks()[0];
-    const caps = track && track.getCapabilities ? track.getCapabilities() : null;
-    if (!caps || !caps.zoom || !(caps.zoom.max > caps.zoom.min)) return;
-    const levels = [1, 1.5, 2].filter(z => z >= caps.zoom.min && z <= caps.zoom.max);
-    if (levels.length < 2) return;
-    let i = 0;
-    btn.textContent = levels[0] + "×";
-    btn.style.display = "";
-    btn.onclick = async () => {
-      i = (i + 1) % levels.length;
-      try { await track.applyConstraints({ advanced: [{ zoom: levels[i] }] }); } catch (e) {}
-      btn.textContent = levels[i] + "×";
-    };
-  } catch (e) {}
-}
-// 카메라 트랙에 연속 자동초점을 적용해 근접 바코드가 또렷하게 잡히도록 한다(지원 기기 한정)
-async function tuneCameraFocus(video) {
-  try {
-    const stream = video.srcObject;
-    const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
-    if (!track || !track.getCapabilities || !track.applyConstraints) return;
-    const caps = track.getCapabilities();
-    const adv = [];
-    if (caps.focusMode && caps.focusMode.includes("continuous")) adv.push({ focusMode: "continuous" });
-    if (caps.exposureMode && caps.exposureMode.includes("continuous")) adv.push({ exposureMode: "continuous" });  // 자동 노출(밝기)
-    if (adv.length) await track.applyConstraints({ advanced: adv });
-    const st = track.getSettings ? track.getSettings() : {};
-    document.getElementById("scanmsg").textContent =
-      "바코드를 인식하면 자동으로 제품을 찾습니다" + (st.width ? " (" + st.width + "×" + st.height + ")" : "");
-  } catch (e) {}
-}
-/* 연속 스캔: 인식해도 카메라를 끄지 않고 하단 결과 카드만 띄운다.
-   카드에서 제품명 복사·상세 보기가 되고, 그대로 다음 제품을 바로 찍을 수 있다
-   (카메라 기동 1~2초를 매번 내지 않아도 됨). */
-let lastScan = { code: null, t: 0, flash: 0 };
-function handleScanCode(code) {
-  if (scanHandled) return;                    // 상세/검색으로 전환 중엔 무시
-  if (!/^\d{8,14}$/.test(code)) return;
-  const now = Date.now();
-  // 같은 바코드를 계속 비추고 있을 때: 카드가 이미 떠 있으면 재표시만 억제하고,
-  // "인식은 되고 있다"는 표시로 프레임을 가끔 반짝인다. 카드가 닫혀 있으면 다시 보여준다
-  // (예전엔 카드가 없어도 2.5초간 무반응이라 인식이 안 되는 것처럼 느껴졌음).
-  if (code === lastScan.code && now - lastScan.t < 2500 &&
-      document.getElementById("scanresult").classList.contains("show")) {
-    lastScan.t = now;
-    if (now - lastScan.flash > 1200) {
-      lastScan.flash = now;
-      const sc = document.getElementById("scanner");
-      sc.classList.add("hit");
-      setTimeout(() => sc.classList.remove("hit"), 300);
-    }
-    return;
-  }
-  lastScan = { code, t: now, flash: now };
-  onScanned(code);
-}
-function onScanned(code) {
-  if (navigator.vibrate) navigator.vibrate(80);
-  const sc = document.getElementById("scanner");
-  sc.classList.add("hit");                     // 초록 프레임 반짝
-  setTimeout(() => sc.classList.remove("hit"), 450);
-  const hit = PRODUCTS.find(p => p.colors.some(c => c.sizes.some(s => s.barcode === code)));
-  const el = document.getElementById("scanresult");
-  if (hit) {
-    const img = hit._img ? `<img src="${esc(imgUrl(hit._img, 100))}" alt="">` : "";
-    // 자점 재고 줄 — 자리를 미리 잡아두고(레이아웃 고정) srStock이 비동기로 채운다
-    const stkLine = hit.storeOnly ? "" : `<div class="sr-stk wait" id="srstk" data-code="${esc(code)}">${esc(myStore().name)} 재고 확인 중…</div>`;
-    el.innerHTML = `<div class="sr-top">${img}<div class="sr-tx"><div class="sr-nm">${esc(hit.name)}</div>
-      <div class="sr-sub">${hit.price ? hit.price.toLocaleString() + "원 · " : ""}${esc(code)}</div></div>
-      <button class="sr-x" onclick="hideScanResult()">✕</button></div>${stkLine}
-      <div class="sr-btns"><button onclick='srCopy(${JSON.stringify(hit.id)})'>제품명 복사</button>
-      <button class="pri" onclick='srDetail(${JSON.stringify(hit.id)})'>상세 보기</button></div>`;
-    if (!hit.storeOnly) srStock(hit, code);
-  } else {
-    el.innerHTML = `<div class="sr-top"><div class="sr-tx"><div class="sr-nm">일치 제품 없음</div>
-      <div class="sr-sub">${esc(code)}</div></div>
-      <button class="sr-x" onclick="hideScanResult()">✕</button></div>
-      <div class="sr-btns"><button class="pri" onclick='srSearch(${JSON.stringify(code)})'>이 번호로 검색</button></div>`;
-  }
-  el.classList.add("show");
-}
-function hideScanResult() {
-  document.getElementById("scanresult").classList.remove("show");
-  lastScan = { code: null, t: 0, flash: 0 };  // 카드를 닫으면 같은 제품도 바로 다시 찍을 수 있게
-}
-window.srCopy = id => { const p = PRODUCTS.find(x => x.id === id); if (p) copyText(p.name, "제품명 복사됨"); };
-// 스캔 결과 카드의 자점 재고 — 스캔한 바코드(=해당 색상·사이즈 옵션)의 내 매장 수량
-async function srStock(p, code) {
-  const store = myStore();
-  let txt, zero;
-  try {
-    const g = await fetchGallery(p.id);
-    const m = g.optMap && g.optMap[code];
-    if (!m) throw new Error("옵션 없음");
-    const rows = await fetchStores(m.oid);
-    const mine = rows.find(r => r.id === store.id);
-    const n = mine ? (mine.usable_stock || 0) : null;
-    txt = `${store.name} ${n === null ? "?" : (n ? n + "개" : "재고 없음")}`;
-    zero = !n;
-  } catch (e) { txt = `${store.name} 재고 확인 불가`; zero = true; }
-  const slot = document.getElementById("srstk");
-  if (!slot || slot.dataset.code !== code) return;  // 그 사이 다른 스캔으로 카드가 바뀜
-  slot.textContent = txt;
-  slot.classList.remove("wait");
-  slot.classList.toggle("zero", zero);
-}
-// 상세/검색으로 나갈 때: 다음 화면을 스캐너 뒤에서 먼저 그린 뒤 스캐너만 페이드아웃(크로스페이드)
-window.srDetail = id => {
-  scanHandled = true;
-  nav({ view: "product", id });
-  setTimeout(closeScanner, 240);
-};
-window.srSearch = code => {
-  scanHandled = true;
-  $q.value = code;
-  $clearq.style.display = "block";
-  history.pushState({}, "", "#");
-  renderSearch(code);
-  setTimeout(closeScanner, 240);
-};
-// 카메라 스트림·디코더 정지. srcObject는 그대로 둬서 마지막 프레임이 정지화면처럼 남는다.
-function stopScanStream() {
-  clearInterval(scanWatch); scanWatch = null;
-  if (scanLoopStop) { scanLoopStop(); scanLoopStop = null; }
-  if (scanControls) { try { scanControls.stop(); } catch (e) {} scanControls = null; }
-  if (scanReader) {
-    try { if (scanReader.stopContinuousDecode) scanReader.stopContinuousDecode(); } catch (e) {}
-    try { scanReader.reset(); } catch (e) {}
-    scanReader = null;
-  }
-  const v = document.getElementById("scanvideo");
-  if (v && v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} }
-}
-function closeScanner() {
-  stopScanStream();
-  const v = document.getElementById("scanvideo");
-  if (v) { v.srcObject = null; v.classList.remove("on"); }
-  const sc = document.getElementById("scanner");
-  sc.classList.remove("open");
-  sc.classList.remove("hit");
-  hideScanResult();
-}
-// 앱이 백그라운드로 가거나 페이지를 떠날 때 카메라 정리
-document.addEventListener("visibilitychange", () => { if (document.hidden) closeScanner(); });
-window.addEventListener("pagehide", closeScanner);
 </script>
 </body>
 </html>

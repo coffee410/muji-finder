@@ -1,7 +1,7 @@
 {
-  "name": "MUJI 제품 찾기",
-  "short_name": "MUJI 찾기",
-  "description": "매장 직원용 제품명·바코드 검색",
+  "name": "MUJI 매장 게시판",
+  "short_name": "MUJI 게시판",
+  "description": "매장 직원용 주차지시서·공지사항·교육자료",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -1,4 +1,4 @@
-/* MUJI 제품 찾기 — 서비스 워커 (오프라인 캐시)
+/* MUJI 매장 게시판 — 서비스 워커 (오프라인 캐시)
  *
  * 전략:
  *  - 페이지(index.html)·데이터(products.json 등)·무인양품 API: 네트워크 우선, 실패(오프라인) 시 캐시
@@ -7,7 +7,7 @@
  *  - 제품 사진(product.mujikorea.co.kr): 캐시 우선 + 최대 900장 제한(초과 시 오래된 것부터 삭제)
  *  - Firebase(교육자료)는 건드리지 않음(온라인 전용)
  */
-const VER = "v4";  // v4: 네트워크 우선 요청에 HTTP 캐시 재검증 강제(no-cache/no-store). v3: zxing-wasm 사전 캐시. v2: API 캐시 분리
+const VER = "v5";  // v5: 제품 찾기 제거(데이터·스캐너 사전 캐시 삭제, 옛 캐시 정리). v4: 네트워크 우선 요청에 HTTP 캐시 재검증 강제(no-cache/no-store). v3: zxing-wasm 사전 캐시. v2: API 캐시 분리
 const SHELL = "muji-shell-" + VER;
 const IMGS = "muji-imgs-" + VER;
 const API = "muji-api-" + VER;
@@ -15,9 +15,8 @@ const IMG_LIMIT = 900;
 const API_LIMIT = 200;                  // 제품 상세·재고 응답 최대 개수
 const API_MAX_AGE = 24 * 60 * 60 * 1000;  // 재고 숫자는 금방 낡으므로 24시간 지나면 오프라인에도 안 씀
 
-const PRECACHE = ["./", "./index.html", "./vendor/zxing.min.js",
-  "./vendor/zxing-wasm-reader.js", "./vendor/zxing_reader.wasm", "./manifest.webmanifest",
-  "./data/products.json", "./data/extra.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
+const PRECACHE = ["./", "./index.html", "./manifest.webmanifest",
+  "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil((async () => {
